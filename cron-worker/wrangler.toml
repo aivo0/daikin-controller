@@ -1,0 +1,14 @@
+# Separate Cloudflare Worker for cron triggers
+# Deploy this worker separately to trigger the main app's /api/cron endpoint
+
+name = "daikin-cron"
+main = "index.ts"
+compatibility_date = "2024-12-01"
+
+[triggers]
+crons = ["*/15 * * * *"]  # Every 15 minutes
+
+[vars]
+APP_URL = "https://daikin-controller.pages.dev"
+
+# Set CRON_SECRET via `wrangler secret put CRON_SECRET`
