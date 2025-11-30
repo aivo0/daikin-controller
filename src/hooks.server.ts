@@ -18,16 +18,20 @@ export const handle: Handle = async ({ event, resolve }) => {
 
 	const auth = createAuth(event.platform.env);
 
+	// Allowed email addresses
+	const ALLOWED_EMAILS = ['user@example.com'];
+
 	// Get session
 	try {
 		const session = await auth.api.getSession({
 			headers: event.request.headers
 		});
 
-		if (session) {
+		if (session && session.user?.email && ALLOWED_EMAILS.includes(session.user.email)) {
 			event.locals.session = session.session;
 			event.locals.user = session.user;
 		} else {
+			// User not in allowed list - treat as not authenticated
 			event.locals.session = null;
 			event.locals.user = null;
 		}
