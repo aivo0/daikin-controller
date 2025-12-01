@@ -28,12 +28,36 @@ export interface DeviceState {
 	dhw_tank_temp?: number | null;
 	dhw_target_temp?: number | null;
 	dhw_action?: string;
+	// Energy consumption (kWh)
+	heating_kwh?: number | null;
+	cooling_kwh?: number | null;
+	dhw_kwh?: number | null;
 }
 
 // DHW (Domestic Hot Water) state
 export interface DHWState {
 	tank_temp: number | null;      // Current tank temperature
 	target_temp: number | null;    // Target temperature setting
+}
+
+// Energy consumption data (kWh)
+export interface ConsumptionData {
+	heating_today_kwh: number | null;    // Today's heating consumption (sum)
+	cooling_today_kwh: number | null;    // Today's cooling consumption (sum)
+	dhw_today_kwh: number | null;        // Today's DHW consumption (sum)
+	// Hourly arrays (24 values, index = hour of day)
+	heating_hourly: (number | null)[];
+	cooling_hourly: (number | null)[];
+	dhw_hourly: (number | null)[];
+}
+
+// Hourly consumption record for database
+export interface HourlyConsumption {
+	timestamp: string;  // Date in ISO format (date only, no time)
+	hour: number;       // 0-23
+	heating_kwh: number | null;
+	cooling_kwh: number | null;
+	dhw_kwh: number | null;
 }
 
 // Settings

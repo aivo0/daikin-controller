@@ -8,8 +8,9 @@
 
 	const navItems = [
 		{ href: '/', label: 'Töölaud', icon: '📊' },
-		{ href: '/settings', label: 'Seaded', icon: '⚙️' },
-		{ href: '/history', label: 'Ajalugu', icon: '📈' }
+		{ href: '/consumption', label: 'Tarbimine', icon: '⚡' },
+		{ href: '/history', label: 'Ajalugu', icon: '📈' },
+		{ href: '/settings', label: 'Seaded', icon: '⚙️' }
 	];
 
 	async function signOut() {

@@ -1,5 +1,5 @@
 import type { Database } from './db';
-import { getSettings, logControlAction, saveDeviceState } from './db';
+import { getSettings, logControlAction, saveDeviceState, saveHourlyConsumption } from './db';
 import {
 	getTodayPrices,
 	getTomorrowPrices,
@@ -16,7 +16,8 @@ import {
 	isWaterBasedSystem,
 	findDHWControlId,
 	parseDHWState,
-	setDHWTemperature
+	setDHWTemperature,
+	parseConsumptionData
 } from './daikin';
 import type { ControlAction, ControlDecision, Settings, PriceData, DeviceState, DHWState } from '$lib/types';
 
@@ -286,6 +287,9 @@ export async function executeScheduledTask(
 		const dhwControlId = findDHWControlId(device);
 		const dhwState = parseDHWState(device);
 
+		// Parse consumption data
+		const consumptionData = parseConsumptionData(device);
+
 		if (!isWaterBased) {
 			return {
 				success: false,
@@ -314,7 +318,7 @@ export async function executeScheduledTask(
 			);
 		}
 
-		// Save current state with price, action, and DHW data
+		// Save current state with price, action, DHW data, and consumption
 		const stateToSave: DeviceState = {
 			...deviceState,
 			timestamp: new Date().toISOString(),
@@ -322,9 +326,16 @@ export async function executeScheduledTask(
 			action_taken: decision.action,
 			dhw_tank_temp: dhwState?.tank_temp ?? null,
 			dhw_target_temp: dhwState?.target_temp ?? null,
-			dhw_action: dhwDecision?.action ?? null
+			dhw_action: dhwDecision?.action ?? null,
+			heating_kwh: consumptionData.heating_today_kwh,
+			cooling_kwh: consumptionData.cooling_today_kwh,
+			dhw_kwh: consumptionData.dhw_today_kwh
 		};
 		await saveDeviceState(db, stateToSave);
+
+		// Save hourly consumption data
+		const todayDateStr = new Date().toISOString().split('T')[0];
+		await saveHourlyConsumption(db, todayDateStr, consumptionData);
 
 		const messages: string[] = [];
 

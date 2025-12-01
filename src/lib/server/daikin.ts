@@ -1,6 +1,6 @@
 import type { Database } from './db';
 import { getTokens, saveTokens } from './db';
-import type { DaikinTokens, DaikinDevice, DaikinManagementPoint, DeviceState, DHWState } from '$lib/types';
+import type { DaikinTokens, DaikinDevice, DaikinManagementPoint, DeviceState, DHWState, ConsumptionData } from '$lib/types';
 
 const DAIKIN_AUTH_URL = 'https://idp.onecta.daikineurope.com/v1/oidc/authorize';
 const DAIKIN_TOKEN_URL = 'https://idp.onecta.daikineurope.com/v1/oidc/token';
@@ -415,4 +415,80 @@ export async function setDHWTemperature(
 			}
 		}
 	);
+}
+
+/**
+ * Sum today's consumption from daily array (d[])
+ * The array contains 24 hourly values, we sum non-null values
+ */
+function sumDailyConsumption(dailyArray: (number | null)[] | undefined): number | null {
+	if (!dailyArray || !Array.isArray(dailyArray)) return null;
+
+	const values = dailyArray.filter((v): v is number => v !== null && typeof v === 'number');
+	if (values.length === 0) return null;
+
+	return values.reduce((sum, v) => sum + v, 0);
+}
+
+/**
+ * Parse energy consumption data from device
+ * Returns today's consumption for heating, cooling, and DHW (both sum and hourly)
+ */
+export function parseConsumptionData(device: DaikinDevice): ConsumptionData {
+	let heatingHourly: (number | null)[] = new Array(24).fill(null);
+	let coolingHourly: (number | null)[] = new Array(24).fill(null);
+	let dhwHourly: (number | null)[] = new Array(24).fill(null);
+
+	// Get climate control consumption
+	const climateControl = device.managementPoints.find(
+		(mp) => mp.managementPointType === 'climateControl'
+	);
+
+	if (climateControl) {
+		const consumption = climateControl.consumptionData as {
+			value?: {
+				electrical?: {
+					heating?: { d?: (number | null)[] };
+					cooling?: { d?: (number | null)[] };
+				};
+			};
+		} | undefined;
+
+		if (consumption?.value?.electrical) {
+			if (consumption.value.electrical.heating?.d) {
+				heatingHourly = consumption.value.electrical.heating.d.slice(0, 24);
+			}
+			if (consumption.value.electrical.cooling?.d) {
+				coolingHourly = consumption.value.electrical.cooling.d.slice(0, 24);
+			}
+		}
+	}
+
+	// Get DHW consumption
+	const dhw = device.managementPoints.find(
+		(mp) => mp.managementPointType === 'domesticHotWaterTank'
+	);
+
+	if (dhw) {
+		const consumption = dhw.consumptionData as {
+			value?: {
+				electrical?: {
+					heating?: { d?: (number | null)[] };
+				};
+			};
+		} | undefined;
+
+		if (consumption?.value?.electrical?.heating?.d) {
+			dhwHourly = consumption.value.electrical.heating.d.slice(0, 24);
+		}
+	}
+
+	return {
+		heating_today_kwh: sumDailyConsumption(heatingHourly),
+		cooling_today_kwh: sumDailyConsumption(coolingHourly),
+		dhw_today_kwh: sumDailyConsumption(dhwHourly),
+		heating_hourly: heatingHourly,
+		cooling_hourly: coolingHourly,
+		dhw_hourly: dhwHourly
+	};
 }

@@ -1,4 +1,4 @@
-import type { Settings, PriceData, DeviceState, ControlLogEntry, DaikinTokens } from '$lib/types';
+import type { Settings, PriceData, DeviceState, ControlLogEntry, DaikinTokens, ConsumptionData, HourlyConsumption } from '$lib/types';
 
 // Database interface that works with both D1 and better-sqlite3
 export interface Database {
@@ -107,8 +107,8 @@ export async function saveDeviceState(
 ): Promise<void> {
 	// Use both old and new column names for compatibility
 	await db.run(
-		`INSERT INTO device_state (timestamp, device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, price_cent_kwh, action_taken, dhw_tank_temp, dhw_target_temp, dhw_action)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO device_state (timestamp, device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, price_cent_kwh, action_taken, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		state.timestamp || new Date().toISOString(),
 		state.device_id,
 		state.water_temp, // old column
@@ -122,7 +122,10 @@ export async function saveDeviceState(
 		state.action_taken || null,
 		state.dhw_tank_temp ?? null,
 		state.dhw_target_temp ?? null,
-		state.dhw_action ?? null
+		state.dhw_action ?? null,
+		state.heating_kwh ?? null,
+		state.cooling_kwh ?? null,
+		state.dhw_kwh ?? null
 	);
 }
 
@@ -141,7 +144,10 @@ export async function getLatestDeviceState(db: Database): Promise<DeviceState | 
 		dhw_tank_temp: number | null;
 		dhw_target_temp: number | null;
 		dhw_action: string | null;
-	}>('SELECT device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp, dhw_tank_temp, dhw_target_temp, dhw_action FROM device_state ORDER BY timestamp DESC LIMIT 1');
+		heating_kwh: number | null;
+		cooling_kwh: number | null;
+		dhw_kwh: number | null;
+	}>('SELECT device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh FROM device_state ORDER BY timestamp DESC LIMIT 1');
 
 	if (!row) return null;
 
@@ -155,7 +161,10 @@ export async function getLatestDeviceState(db: Database): Promise<DeviceState | 
 		timestamp: row.timestamp,
 		dhw_tank_temp: row.dhw_tank_temp,
 		dhw_target_temp: row.dhw_target_temp,
-		dhw_action: row.dhw_action ?? undefined
+		dhw_action: row.dhw_action ?? undefined,
+		heating_kwh: row.heating_kwh,
+		cooling_kwh: row.cooling_kwh,
+		dhw_kwh: row.dhw_kwh
 	};
 }
 
@@ -174,6 +183,9 @@ export async function getDeviceStateHistory(db: Database, hours: number = 24): P
 		dhw_tank_temp: number | null;
 		dhw_target_temp: number | null;
 		dhw_action: string | null;
+		heating_kwh: number | null;
+		cooling_kwh: number | null;
+		dhw_kwh: number | null;
 	}>('SELECT * FROM device_state WHERE timestamp >= ? ORDER BY timestamp', since);
 
 	return rows.map(row => ({
@@ -188,7 +200,10 @@ export async function getDeviceStateHistory(db: Database, hours: number = 24): P
 		action_taken: row.action_taken ?? undefined,
 		dhw_tank_temp: row.dhw_tank_temp,
 		dhw_target_temp: row.dhw_target_temp,
-		dhw_action: row.dhw_action ?? undefined
+		dhw_action: row.dhw_action ?? undefined,
+		heating_kwh: row.heating_kwh,
+		cooling_kwh: row.cooling_kwh,
+		dhw_kwh: row.dhw_kwh
 	}));
 }
 
@@ -238,5 +253,50 @@ export async function getRecentControlLogs(
 	return db.all<ControlLogEntry>(
 		'SELECT id, timestamp, action, reason, price_eur_mwh, old_target_temp, new_target_temp FROM control_log ORDER BY timestamp DESC LIMIT ?',
 		limit
+	);
+}
+
+// Energy consumption helpers
+export async function saveHourlyConsumption(
+	db: Database,
+	dateStr: string,
+	consumption: ConsumptionData
+): Promise<void> {
+	// Save each hour's consumption
+	for (let hour = 0; hour < 24; hour++) {
+		const heating = consumption.heating_hourly[hour];
+		const cooling = consumption.cooling_hourly[hour];
+		const dhw = consumption.dhw_hourly[hour];
+
+		// Only save if we have any data for this hour
+		if (heating !== null || cooling !== null || dhw !== null) {
+			await db.run(
+				`INSERT INTO energy_consumption (timestamp, hour, heating_kwh, cooling_kwh, dhw_kwh)
+				 VALUES (?, ?, ?, ?, ?)
+				 ON CONFLICT(timestamp, hour) DO UPDATE SET
+				   heating_kwh = excluded.heating_kwh,
+				   cooling_kwh = excluded.cooling_kwh,
+				   dhw_kwh = excluded.dhw_kwh`,
+				dateStr,
+				hour,
+				heating,
+				cooling,
+				dhw
+			);
+		}
+	}
+}
+
+export async function getHourlyConsumption(
+	db: Database,
+	days: number = 7
+): Promise<HourlyConsumption[]> {
+	const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+	return db.all<HourlyConsumption>(
+		`SELECT timestamp, hour, heating_kwh, cooling_kwh, dhw_kwh
+		 FROM energy_consumption
+		 WHERE timestamp >= ?
+		 ORDER BY timestamp, hour`,
+		since
 	);
 }
