@@ -72,7 +72,9 @@ export const actions: Actions = {
 				'low_price_threshold',
 				'high_price_threshold',
 				'cheapest_hours',
-				'peak_hours_to_avoid'
+				'peak_hours_to_avoid',
+				'dhw_min_temp',
+				'dhw_target_temp'
 			];
 
 			for (const key of settingsToUpdate) {
@@ -90,6 +92,10 @@ export const actions: Actions = {
 			};
 
 			await updateSetting(db, 'strategies_enabled', JSON.stringify(strategies));
+
+			// Handle DHW enabled toggle
+			const dhwEnabled = formData.get('dhw_enabled') === 'on';
+			await updateSetting(db, 'dhw_enabled', dhwEnabled.toString());
 
 			return { success: true };
 		} catch (error) {

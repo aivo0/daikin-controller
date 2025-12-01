@@ -13,9 +13,20 @@ import {
 	parseDeviceState,
 	setHeatingTemperature,
 	findClimateControlId,
-	isWaterBasedSystem
+	isWaterBasedSystem,
+	findDHWControlId,
+	parseDHWState,
+	setDHWTemperature
 } from './daikin';
-import type { ControlAction, ControlDecision, Settings, PriceData, DeviceState } from '$lib/types';
+import type { ControlAction, ControlDecision, Settings, PriceData, DeviceState, DHWState } from '$lib/types';
+
+// DHW control decision
+export interface DHWControlDecision {
+	action: ControlAction;
+	reason: string;
+	targetTemperature: number;
+	currentPrice: number;
+}
 
 /**
  * Find the cheapest hour within a time window
@@ -126,6 +137,86 @@ export function calculateSmartHeatingAction(
 }
 
 /**
+ * Smart DHW (sooja vee boiler) control decision
+ * Strategy:
+ * 1. If tank temp ≤ min_temp (42°C) → BOOST immediately (safety/legionella)
+ * 2. If current hour is cheapest in 6h window → BOOST to target (55°C)
+ * 3. Otherwise → REDUCE to min_temp (let temp drift down)
+ */
+export function calculateDHWAction(
+	currentPriceCentKwh: number,
+	currentTimestamp: string,
+	allPrices: PriceData[],
+	settings: Settings,
+	dhwState: DHWState | null
+): DHWControlDecision {
+	const reasons: string[] = [];
+	let action: ControlAction = 'reduce';
+	let targetTemp = settings.dhw_min_temp; // Default: minimum (42°C)
+
+	const minTemp = settings.dhw_min_temp;
+	const boostTemp = settings.dhw_target_temp;
+	const windowHours = settings.best_price_window_hours;
+	const tankTemp = dhwState?.tank_temp ?? null;
+
+	// Safety check: if tank temp is too low, boost immediately
+	if (tankTemp !== null && tankTemp <= minTemp) {
+		action = 'boost';
+		targetTemp = boostTemp;
+		reasons.push(`Boileri temp ${tankTemp}°C miinimumi ${minTemp}°C juures - soojendamine`);
+		return {
+			action,
+			reason: reasons.join('; '),
+			targetTemperature: targetTemp,
+			currentPrice: currentPriceCentKwh
+		};
+	}
+
+	// Find cheapest hour in the next N hours
+	const cheapestInWindow = findCheapestHourInWindow(allPrices, windowHours, currentTimestamp);
+
+	if (cheapestInWindow) {
+		const currentHourStart = new Date(currentTimestamp).getTime();
+		const cheapestHourStart = new Date(cheapestInWindow.timestamp).getTime();
+
+		// Check if current hour IS the cheapest hour
+		if (Math.abs(currentHourStart - cheapestHourStart) < 60 * 60 * 1000) {
+			action = 'boost';
+			targetTemp = boostTemp;
+			reasons.push(`Praegune tund on odavaim ${windowHours}h aknas (${cheapestInWindow.price.toFixed(1)} s/kWh) - boileri soojendamine`);
+		} else {
+			// Not the cheapest hour - reduce/wait
+			action = 'reduce';
+			targetTemp = minTemp;
+			const hoursUntilCheapest = Math.round((cheapestHourStart - currentHourStart) / (60 * 60 * 1000));
+			reasons.push(`Ootan odavamat hinda ${hoursUntilCheapest}h pärast (${cheapestInWindow.price.toFixed(1)} s/kWh)`);
+
+			if (tankTemp !== null) {
+				reasons.push(`Boileri temp: ${tankTemp}°C (min: ${minTemp}°C)`);
+			}
+		}
+	} else {
+		// No price data for window - use threshold strategy
+		if (currentPriceCentKwh < settings.low_price_threshold) {
+			action = 'boost';
+			targetTemp = boostTemp;
+			reasons.push(`Hind ${currentPriceCentKwh.toFixed(1)} s/kWh alla piiri - boileri soojendamine`);
+		} else {
+			action = 'reduce';
+			targetTemp = minTemp;
+			reasons.push(`Hinnaandmed puuduvad, hind ${currentPriceCentKwh.toFixed(1)} s/kWh`);
+		}
+	}
+
+	return {
+		action,
+		reason: reasons.join('; '),
+		targetTemperature: targetTemp,
+		currentPrice: currentPriceCentKwh
+	};
+}
+
+/**
  * Execute the scheduled control task
  */
 export async function executeScheduledTask(
@@ -191,6 +282,10 @@ export async function executeScheduledTask(
 		const climateControlId = findClimateControlId(device);
 		const isWaterBased = isWaterBasedSystem(device);
 
+		// Parse DHW state
+		const dhwControlId = findDHWControlId(device);
+		const dhwState = parseDHWState(device);
+
 		if (!isWaterBased) {
 			return {
 				success: false,
@@ -207,27 +302,34 @@ export async function executeScheduledTask(
 			deviceState.water_temp
 		);
 
-		// Save current state with price and action
+		// Calculate DHW decision if enabled
+		let dhwDecision: DHWControlDecision | null = null;
+		if (settings.dhw_enabled && dhwControlId) {
+			dhwDecision = calculateDHWAction(
+				currentPriceCentKwh,
+				currentTimestamp,
+				allPrices,
+				settings,
+				dhwState
+			);
+		}
+
+		// Save current state with price, action, and DHW data
 		const stateToSave: DeviceState = {
 			...deviceState,
 			timestamp: new Date().toISOString(),
 			price_cent_kwh: currentPriceCentKwh,
-			action_taken: decision.action
+			action_taken: decision.action,
+			dhw_tank_temp: dhwState?.tank_temp ?? null,
+			dhw_target_temp: dhwState?.target_temp ?? null,
+			dhw_action: dhwDecision?.action ?? null
 		};
 		await saveDeviceState(db, stateToSave);
 
-		// Check if we need to make a change
-		if (deviceState.target_offset === decision.targetTemperature) {
-			return {
-				success: true,
-				message: `No change needed. Offset already at ${decision.targetTemperature}`,
-				decision,
-				deviceState
-			};
-		}
+		const messages: string[] = [];
 
-		// Apply temperature change
-		if (climateControlId) {
+		// Apply heating temperature change
+		if (climateControlId && deviceState.target_offset !== decision.targetTemperature) {
 			await setHeatingTemperature(
 				accessToken,
 				device.id,
@@ -246,19 +348,43 @@ export async function executeScheduledTask(
 				new_target_temp: decision.targetTemperature
 			});
 
-			return {
-				success: true,
-				message: `Changed offset from ${deviceState.target_offset} to ${decision.targetTemperature} (${decision.action})`,
-				decision,
-				deviceState
-			};
+			messages.push(`Küte: nihe ${deviceState.target_offset} → ${decision.targetTemperature} (${decision.action})`);
+		} else {
+			messages.push(`Küte: muutust pole (nihe ${decision.targetTemperature})`);
+		}
+
+		// Apply DHW temperature change if enabled
+		if (dhwDecision && dhwControlId) {
+			const currentDhwTarget = dhwState?.target_temp ?? 0;
+			if (currentDhwTarget !== dhwDecision.targetTemperature) {
+				await setDHWTemperature(
+					accessToken,
+					device.id,
+					dhwControlId,
+					dhwDecision.targetTemperature
+				);
+
+				// Log DHW control action
+				await logControlAction(db, {
+					timestamp: new Date().toISOString(),
+					action: `dhw_${dhwDecision.action}`,
+					reason: dhwDecision.reason,
+					price_eur_mwh: currentPriceEurMwh,
+					old_target_temp: currentDhwTarget,
+					new_target_temp: dhwDecision.targetTemperature
+				});
+
+				messages.push(`Boiler: siht ${currentDhwTarget}°C → ${dhwDecision.targetTemperature}°C (${dhwDecision.action})`);
+			} else {
+				messages.push(`Boiler: muutust pole (siht ${dhwDecision.targetTemperature}°C)`);
+			}
 		}
 
 		return {
 			success: true,
-			message: 'Task completed but no climate control point found',
+			message: messages.join('; '),
 			decision,
-			deviceState
+			deviceState: stateToSave
 		};
 	} catch (error) {
 		console.error('Scheduled task error:', error);

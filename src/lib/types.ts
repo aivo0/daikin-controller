@@ -24,6 +24,16 @@ export interface DeviceState {
 	timestamp?: string;
 	price_cent_kwh?: number;
 	action_taken?: string;
+	// DHW state
+	dhw_tank_temp?: number | null;
+	dhw_target_temp?: number | null;
+	dhw_action?: string;
+}
+
+// DHW (Domestic Hot Water) state
+export interface DHWState {
+	tank_temp: number | null;      // Current tank temperature
+	target_temp: number | null;    // Target temperature setting
 }
 
 // Settings
@@ -45,6 +55,10 @@ export interface Settings {
 	min_water_temp: number;        // Don't let water drop below this (20°C)
 	target_water_temp: number;     // Heat up to this when boosting (32°C)
 	best_price_window_hours: number; // Look for best price in this window (6h)
+	// DHW (sooja vee boileri) settings
+	dhw_enabled: boolean;          // Enable DHW control
+	dhw_min_temp: number;          // Minimum DHW temp (default: 42°C)
+	dhw_target_temp: number;       // Target when boosting (default: 55°C)
 }
 
 // Control action types

@@ -1,6 +1,6 @@
 import type { Database } from './db';
 import { getTokens, saveTokens } from './db';
-import type { DaikinTokens, DaikinDevice, DaikinManagementPoint, DeviceState } from '$lib/types';
+import type { DaikinTokens, DaikinDevice, DaikinManagementPoint, DeviceState, DHWState } from '$lib/types';
 
 const DAIKIN_AUTH_URL = 'https://idp.onecta.daikineurope.com/v1/oidc/authorize';
 const DAIKIN_TOKEN_URL = 'https://idp.onecta.daikineurope.com/v1/oidc/token';
@@ -331,4 +331,88 @@ export function findClimateControlId(device: DaikinDevice): string | null {
 export async function isConnected(db: Database): Promise<boolean> {
 	const tokens = await getTokens(db);
 	return tokens !== null;
+}
+
+/**
+ * Find the DHW (domestic hot water tank) management point ID
+ */
+export function findDHWControlId(device: DaikinDevice): string | null {
+	const dhw = device.managementPoints.find(
+		(mp) => mp.managementPointType === 'domesticHotWaterTank'
+	);
+	return dhw?.embeddedId ?? null;
+}
+
+/**
+ * Parse DHW state from device management points
+ */
+export function parseDHWState(device: DaikinDevice): DHWState | null {
+	const dhw = device.managementPoints.find(
+		(mp) => mp.managementPointType === 'domesticHotWaterTank'
+	);
+
+	if (!dhw) return null;
+
+	let tankTemp: number | null = null;
+	let targetTemp: number | null = null;
+
+	// Get tank temperature from sensoryData
+	const sensory = dhw.sensoryData as { value?: { tankTemperature?: { value?: number } } } | undefined;
+	if (sensory?.value?.tankTemperature?.value !== undefined) {
+		tankTemp = sensory.value.tankTemperature.value;
+	}
+
+	// Get target temperature from temperatureControl
+	const tempControl = dhw.temperatureControl as {
+		value?: {
+			operationModes?: {
+				heating?: {
+					setpoints?: {
+						domesticHotWaterTemperature?: { value?: number };
+					};
+				};
+			};
+		};
+	} | undefined;
+
+	if (tempControl?.value?.operationModes?.heating?.setpoints?.domesticHotWaterTemperature?.value !== undefined) {
+		targetTemp = tempControl.value.operationModes.heating.setpoints.domesticHotWaterTemperature.value;
+	}
+
+	return {
+		tank_temp: tankTemp,
+		target_temp: targetTemp
+	};
+}
+
+/**
+ * Set DHW target temperature (30-60°C)
+ */
+export async function setDHWTemperature(
+	accessToken: string,
+	deviceId: string,
+	dhwPointId: string,
+	temperature: number
+): Promise<void> {
+	// Clamp temperature to valid range
+	const clampedTemp = Math.max(30, Math.min(60, temperature));
+
+	await apiRequest(
+		accessToken,
+		`/gateway-devices/${deviceId}/management-points/${dhwPointId}/characteristics/temperatureControl`,
+		'PATCH',
+		{
+			value: {
+				operationModes: {
+					heating: {
+						setpoints: {
+							domesticHotWaterTemperature: {
+								value: clampedTemp
+							}
+						}
+					}
+				}
+			}
+		}
+	);
 }

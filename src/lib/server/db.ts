@@ -50,7 +50,11 @@ export async function getSettings(db: Database): Promise<Settings> {
 		// New smart heating settings
 		min_water_temp: parseFloat(settingsMap.get('min_water_temp') || '20'),
 		target_water_temp: parseFloat(settingsMap.get('target_water_temp') || '32'),
-		best_price_window_hours: parseInt(settingsMap.get('best_price_window_hours') || '6')
+		best_price_window_hours: parseInt(settingsMap.get('best_price_window_hours') || '6'),
+		// DHW (sooja vee boiler) settings - range 30-60°C
+		dhw_enabled: settingsMap.get('dhw_enabled') === 'true',
+		dhw_min_temp: parseFloat(settingsMap.get('dhw_min_temp') || '42'),
+		dhw_target_temp: parseFloat(settingsMap.get('dhw_target_temp') || '55')
 	};
 }
 
@@ -103,8 +107,8 @@ export async function saveDeviceState(
 ): Promise<void> {
 	// Use both old and new column names for compatibility
 	await db.run(
-		`INSERT INTO device_state (timestamp, device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, price_cent_kwh, action_taken)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO device_state (timestamp, device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, price_cent_kwh, action_taken, dhw_tank_temp, dhw_target_temp, dhw_action)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		state.timestamp || new Date().toISOString(),
 		state.device_id,
 		state.water_temp, // old column
@@ -115,7 +119,10 @@ export async function saveDeviceState(
 		state.mode,
 		state.power_on ? 1 : 0,
 		state.price_cent_kwh || null,
-		state.action_taken || null
+		state.action_taken || null,
+		state.dhw_tank_temp ?? null,
+		state.dhw_target_temp ?? null,
+		state.dhw_action ?? null
 	);
 }
 
@@ -131,7 +138,10 @@ export async function getLatestDeviceState(db: Database): Promise<DeviceState | 
 		mode: string | null;
 		power_on: number;
 		timestamp: string;
-	}>('SELECT device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp FROM device_state ORDER BY timestamp DESC LIMIT 1');
+		dhw_tank_temp: number | null;
+		dhw_target_temp: number | null;
+		dhw_action: string | null;
+	}>('SELECT device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp, dhw_tank_temp, dhw_target_temp, dhw_action FROM device_state ORDER BY timestamp DESC LIMIT 1');
 
 	if (!row) return null;
 
@@ -142,7 +152,10 @@ export async function getLatestDeviceState(db: Database): Promise<DeviceState | 
 		target_offset: row.target_offset ?? row.target_temp,
 		mode: row.mode,
 		power_on: row.power_on === 1,
-		timestamp: row.timestamp
+		timestamp: row.timestamp,
+		dhw_tank_temp: row.dhw_tank_temp,
+		dhw_target_temp: row.dhw_target_temp,
+		dhw_action: row.dhw_action ?? undefined
 	};
 }
 
@@ -158,6 +171,9 @@ export async function getDeviceStateHistory(db: Database, hours: number = 24): P
 		timestamp: string;
 		price_cent_kwh: number | null;
 		action_taken: string | null;
+		dhw_tank_temp: number | null;
+		dhw_target_temp: number | null;
+		dhw_action: string | null;
 	}>('SELECT * FROM device_state WHERE timestamp >= ? ORDER BY timestamp', since);
 
 	return rows.map(row => ({
@@ -169,7 +185,10 @@ export async function getDeviceStateHistory(db: Database, hours: number = 24): P
 		power_on: row.power_on === 1,
 		timestamp: row.timestamp,
 		price_cent_kwh: row.price_cent_kwh ?? undefined,
-		action_taken: row.action_taken ?? undefined
+		action_taken: row.action_taken ?? undefined,
+		dhw_tank_temp: row.dhw_tank_temp,
+		dhw_target_temp: row.dhw_target_temp,
+		dhw_action: row.dhw_action ?? undefined
 	}));
 }
 

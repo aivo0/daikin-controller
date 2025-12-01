@@ -259,6 +259,64 @@
 			</div>
 		</div>
 
+		<!-- DHW (Boiler) Settings -->
+		<div class="card bg-base-100 shadow-xl mb-6">
+			<div class="card-body">
+				<h2 class="card-title">Boileri (sooja vee) seaded</h2>
+
+				<div class="form-control mb-4">
+					<label class="label cursor-pointer justify-start gap-4">
+						<input
+							type="checkbox"
+							name="dhw_enabled"
+							checked={data.settings.dhw_enabled}
+							class="checkbox checkbox-primary"
+						/>
+						<div>
+							<span class="label-text font-medium">Boileri juhtimine sisse lülitatud</span>
+							<p class="text-sm opacity-70">Luba sooja vee boileri automaatne juhtimine hinna põhjal</p>
+						</div>
+					</label>
+				</div>
+
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div class="form-control">
+						<label class="label" for="dhw_min_temp">
+							<span class="label-text">Miinimum temperatuur (°C)</span>
+						</label>
+						<input
+							type="number"
+							id="dhw_min_temp"
+							name="dhw_min_temp"
+							value={data.settings.dhw_min_temp}
+							min="30"
+							max="60"
+							step="1"
+							class="input input-bordered"
+						/>
+						<span class="label-text-alt mt-1">Boileri temperatuur ei lange alla selle (30-60°C)</span>
+					</div>
+
+					<div class="form-control">
+						<label class="label" for="dhw_target_temp">
+							<span class="label-text">Sihttemperatuur (°C)</span>
+						</label>
+						<input
+							type="number"
+							id="dhw_target_temp"
+							name="dhw_target_temp"
+							value={data.settings.dhw_target_temp}
+							min="30"
+							max="60"
+							step="1"
+							class="input input-bordered"
+						/>
+						<span class="label-text-alt mt-1">Soojendamise sihttemperatuur odavatel tundidel (30-60°C)</span>
+					</div>
+				</div>
+			</div>
+		</div>
+
 		<div class="flex justify-end">
 			<button type="submit" class="btn btn-primary">Salvesta seaded</button>
 		</div>
