@@ -19,6 +19,12 @@
 	</div>
 {/if}
 
+{#if form?.recalculated}
+	<div class="alert alert-success mb-4">
+		<span>Tänane graafik ümberarvutatud! ({form.hoursPlanned} tundi)</span>
+	</div>
+{/if}
+
 {#if form?.message}
 	<div class="alert alert-error mb-4">
 		<span>{form.message}</span>
@@ -51,94 +57,85 @@
 	</div>
 </div>
 
-<!-- Temperature Settings -->
 {#if data.settings}
 	<form method="POST" action="?/updateSettings" use:enhance>
+		<!-- Heating Algorithm Settings -->
 		<div class="card bg-base-100 shadow-xl mb-6">
 			<div class="card-body">
-				<h2 class="card-title">Temperatuuri seaded</h2>
+				<h2 class="card-title">Kütmise algoritm</h2>
+				<p class="text-sm opacity-70 mb-4">
+					Algoritm planeerib iga päev kell 15:00 järgmise päeva küttegraafiku,
+					kasutades elektrihindu ja ilmaprognoosi.
+				</p>
 
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 					<div class="form-control">
-						<label class="label" for="min_temperature">
-							<span class="label-text">Miinimum temperatuur (ohutuspiir)</span>
+						<label class="label" for="price_sensitivity">
+							<span class="label-text">Hinnatundlikkus (K)</span>
 						</label>
 						<input
-							type="number"
-							id="min_temperature"
-							name="min_temperature"
-							value={data.settings.min_temperature}
-							min="15"
-							max="25"
-							step="0.5"
-							class="input input-bordered"
+							type="range"
+							id="price_sensitivity"
+							name="price_sensitivity"
+							value={data.settings.price_sensitivity}
+							min="1"
+							max="10"
+							step="1"
+							class="range range-primary"
 						/>
-						<span class="label-text-alt mt-1">Temperatuur ei lange kunagi alla selle</span>
+						<div class="flex justify-between text-xs px-2 mt-1">
+							<span>1</span>
+							<span>5</span>
+							<span>10</span>
+						</div>
+						<span class="label-text-alt mt-1">
+							Praegune: <strong>{data.settings.price_sensitivity}</strong> —
+							Kõrgem väärtus = suurem hinnaerinevuste mõju temperatuurile
+						</span>
 					</div>
 
 					<div class="form-control">
-						<label class="label" for="base_temperature">
-							<span class="label-text">Baastemperatuur</span>
+						<label class="label" for="cold_weather_threshold">
+							<span class="label-text">Külma ilma lävi (°C)</span>
 						</label>
 						<input
 							type="number"
-							id="base_temperature"
-							name="base_temperature"
-							value={data.settings.base_temperature}
-							min="18"
-							max="28"
-							step="0.5"
-							class="input input-bordered"
-						/>
-						<span class="label-text-alt mt-1">Tavaline töötemperatuur</span>
-					</div>
-
-					<div class="form-control">
-						<label class="label" for="boost_delta">
-							<span class="label-text">Kütmise lisand</span>
-						</label>
-						<input
-							type="number"
-							id="boost_delta"
-							name="boost_delta"
-							value={data.settings.boost_delta}
-							min="0.5"
+							id="cold_weather_threshold"
+							name="cold_weather_threshold"
+							value={data.settings.cold_weather_threshold}
+							min="-20"
 							max="5"
-							step="0.5"
+							step="1"
 							class="input input-bordered"
 						/>
-						<span class="label-text-alt mt-1">Temperatuuri tõus odavate tundide ajal</span>
+						<span class="label-text-alt mt-1">
+							Alla selle temperatuuri vähendatakse kallite tundide karistust
+						</span>
 					</div>
 
 					<div class="form-control">
-						<label class="label" for="reduce_delta">
-							<span class="label-text">Vähendamise lisand</span>
+						<label class="label" for="planning_hour">
+							<span class="label-text">Planeerimise kellaaeg</span>
 						</label>
-						<input
-							type="number"
-							id="reduce_delta"
-							name="reduce_delta"
-							value={data.settings.reduce_delta}
-							min="0.5"
-							max="5"
-							step="0.5"
-							class="input input-bordered"
-						/>
-						<span class="label-text-alt mt-1">Temperatuuri langus kallite tundide ajal</span>
+						<select
+							id="planning_hour"
+							name="planning_hour"
+							class="select select-bordered"
+						>
+							{#each [13, 14, 15, 16, 17] as hour}
+								<option value={hour} selected={data.settings.planning_hour === hour}>
+									{hour}:00
+								</option>
+							{/each}
+						</select>
+						<span class="label-text-alt mt-1">
+							Järgmise päeva plaan arvutatakse sellel kellaajal (homse hinnad saadaval ~14:00)
+						</span>
 					</div>
-				</div>
-			</div>
-		</div>
 
-		<!-- Price Thresholds -->
-		<div class="card bg-base-100 shadow-xl mb-6">
-			<div class="card-body">
-				<h2 class="card-title">Hinnapiirid</h2>
-
-				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 					<div class="form-control">
 						<label class="label" for="low_price_threshold">
-							<span class="label-text">Madala hinna piir (senti/kWh)</span>
+							<span class="label-text">Madala hinna piir (s/kWh)</span>
 						</label>
 						<input
 							type="number"
@@ -146,115 +143,14 @@
 							name="low_price_threshold"
 							value={data.settings.low_price_threshold}
 							min="0"
-							max="50"
+							max="20"
 							step="0.5"
 							class="input input-bordered"
 						/>
-						<span class="label-text-alt mt-1">Küta rohkem kui hind on alla selle</span>
+						<span class="label-text-alt mt-1">
+							Kasutatakse ainult varustrateegiana kui plaan puudub
+						</span>
 					</div>
-
-					<div class="form-control">
-						<label class="label" for="high_price_threshold">
-							<span class="label-text">Kõrge hinna piir (senti/kWh)</span>
-						</label>
-						<input
-							type="number"
-							id="high_price_threshold"
-							name="high_price_threshold"
-							value={data.settings.high_price_threshold}
-							min="0"
-							max="100"
-							step="0.5"
-							class="input input-bordered"
-						/>
-						<span class="label-text-alt mt-1">Vähenda kütmist kui hind on üle selle</span>
-					</div>
-
-					<div class="form-control">
-						<label class="label" for="cheapest_hours">
-							<span class="label-text">Odavaimad tunnid kütmiseks</span>
-						</label>
-						<input
-							type="number"
-							id="cheapest_hours"
-							name="cheapest_hours"
-							value={data.settings.cheapest_hours}
-							min="0"
-							max="12"
-							step="1"
-							class="input input-bordered"
-						/>
-						<span class="label-text-alt mt-1">Mitu odavaimat tundi päevas kütta (0 = väljas)</span>
-					</div>
-
-					<div class="form-control">
-						<label class="label" for="peak_hours_to_avoid">
-							<span class="label-text">Tipptunnid vältimiseks</span>
-						</label>
-						<input
-							type="number"
-							id="peak_hours_to_avoid"
-							name="peak_hours_to_avoid"
-							value={data.settings.peak_hours_to_avoid}
-							min="0"
-							max="12"
-							step="1"
-							class="input input-bordered"
-						/>
-						<span class="label-text-alt mt-1">Mitu kallimat tundi vältida (0 = väljas)</span>
-					</div>
-				</div>
-			</div>
-		</div>
-
-		<!-- Control Strategies -->
-		<div class="card bg-base-100 shadow-xl mb-6">
-			<div class="card-body">
-				<h2 class="card-title">Juhtimisstrateegiad</h2>
-
-				<div class="form-control">
-					<label class="label cursor-pointer justify-start gap-4">
-						<input
-							type="checkbox"
-							name="strategy_threshold"
-							checked={data.settings.strategies_enabled.threshold}
-							class="checkbox checkbox-primary"
-						/>
-						<div>
-							<span class="label-text font-medium">Hinnapiir</span>
-							<p class="text-sm opacity-70">Küta odavalt, vähenda kallilt</p>
-						</div>
-					</label>
-				</div>
-
-				<div class="form-control">
-					<label class="label cursor-pointer justify-start gap-4">
-						<input
-							type="checkbox"
-							name="strategy_cheapest"
-							checked={data.settings.strategies_enabled.cheapest}
-							class="checkbox checkbox-primary"
-						/>
-						<div>
-							<span class="label-text font-medium">Odavaimad tunnid</span>
-							<p class="text-sm opacity-70">Küta päeva N odavaimal tunnil</p>
-						</div>
-					</label>
-				</div>
-
-				<div class="form-control">
-					<label class="label cursor-pointer justify-start gap-4">
-						<input
-							type="checkbox"
-							name="strategy_peaks"
-							checked={data.settings.strategies_enabled.peaks}
-							class="checkbox checkbox-primary"
-						/>
-						<div>
-							<span class="label-text font-medium">Tipptundide vältimine</span>
-							<p class="text-sm opacity-70">Vähenda N kõige kallimat tundi</p>
-						</div>
-					</label>
 				</div>
 			</div>
 		</div>
@@ -290,30 +186,44 @@
 							name="dhw_min_temp"
 							value={data.settings.dhw_min_temp}
 							min="30"
-							max="60"
+							max="50"
 							step="1"
 							class="input input-bordered"
 						/>
-						<span class="label-text-alt mt-1">Boileri temperatuur ei lange alla selle (30-60°C)</span>
+						<span class="label-text-alt mt-1">Boileri temperatuur ei lange alla selle kallitel tundidel</span>
 					</div>
 
 					<div class="form-control">
 						<label class="label" for="dhw_target_temp">
-							<span class="label-text">Sihttemperatuur (°C)</span>
+							<span class="label-text">Maksimum temperatuur (°C)</span>
 						</label>
 						<input
 							type="number"
 							id="dhw_target_temp"
 							name="dhw_target_temp"
 							value={data.settings.dhw_target_temp}
-							min="30"
+							min="40"
 							max="60"
 							step="1"
 							class="input input-bordered"
 						/>
-						<span class="label-text-alt mt-1">Soojendamise sihttemperatuur odavatel tundidel (30-60°C)</span>
+						<span class="label-text-alt mt-1">Soojendamise sihttemperatuur odavatel tundidel</span>
 					</div>
 				</div>
+			</div>
+		</div>
+
+		<!-- Algorithm Info -->
+		<div class="card bg-base-200 shadow-xl mb-6">
+			<div class="card-body">
+				<h2 class="card-title text-base">Kuidas algoritm töötab</h2>
+				<ul class="text-sm space-y-2 list-disc list-inside opacity-80">
+					<li><strong>Igapäevane planeerimine:</strong> Kell {data.settings.planning_hour}:00 arvutatakse järgmise päeva graafik</li>
+					<li><strong>50% garantii:</strong> Vähemalt pooltel tundidel on kütmine normaalsel või kõrgemal tasemel</li>
+					<li><strong>Hinnapõhine nihe:</strong> Odavatel tundidel nihe +1 kuni +7, kallistel -1 kuni -7</li>
+					<li><strong>Külma ilma kaitse:</strong> Alla {data.settings.cold_weather_threshold}°C vähendatakse kallite tundide karistust</li>
+					<li><strong>Ilmaprognoos:</strong> Kasutatakse Open-Meteo API-t (Luige alevik, Harjumaa)</li>
+				</ul>
 			</div>
 		</div>
 
@@ -321,4 +231,20 @@
 			<button type="submit" class="btn btn-primary">Salvesta seaded</button>
 		</div>
 	</form>
+
+	<!-- Manual Recalculation -->
+	<div class="card bg-base-100 shadow-xl mb-6">
+		<div class="card-body">
+			<h2 class="card-title">Käsitsi ümberarvutus</h2>
+			<p class="text-sm opacity-70 mb-4">
+				Arvuta tänane küttegraafik kohe ümber, kasutades praeguseid seadeid ja hindu.
+				Kasulik pärast seadete muutmist, et näha muudatusi kohe.
+			</p>
+			<form method="POST" action="?/recalculate" use:enhance>
+				<button type="submit" class="btn btn-secondary">
+					Arvuta tänane graafik ümber
+				</button>
+			</form>
+		</div>
+	</div>
 {/if}

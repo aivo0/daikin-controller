@@ -50,7 +50,7 @@
 			class:btn-active={viewMode === 'hourly'}
 			onclick={() => viewMode = 'hourly'}
 		>
-			Tunnipõhine
+			2-tunnine
 		</button>
 		<button
 			class="btn btn-sm"
@@ -66,7 +66,7 @@
 	{#if data.hourlyData && data.hourlyData.length > 0}
 		<div class="card bg-base-100 shadow-xl">
 			<div class="card-body">
-				<h2 class="card-title">Tunnipõhine tarbimine (viimased 7 päeva)</h2>
+				<h2 class="card-title">2-tunnine tarbimine (viimased 7 päeva)</h2>
 				<HourlyConsumptionChart data={data.hourlyData} />
 			</div>
 		</div>

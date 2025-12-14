@@ -10,25 +10,21 @@
 	let canvas: HTMLCanvasElement;
 	let chart: Chart | null = null;
 
-	// Convert UTC hour to local Date object
-	function toLocalDate(d: HourlyConsumption): Date {
-		// Create UTC timestamp from date string and hour
-		const utcDate = new Date(`${d.timestamp}T${String(d.hour).padStart(2, '0')}:00:00Z`);
-		return utcDate;
+	// Format 2-hour block label (e.g., "06-08")
+	function formatBlockLabel(startHour: number): string {
+		const endHour = (startHour + 2) % 24;
+		return `${String(startHour).padStart(2, '0')}-${String(endHour).padStart(2, '0')}`;
 	}
 
 	function createChart() {
 		if (!canvas || data.length === 0) return;
 
-		// Create labels for each hour (date + hour) in local time
+		// Create labels for each 2-hour block
+		// Data format: hour = start hour of 2-hour block (0, 2, 4, ..., 22)
 		const labels = data.map(d => {
-			const localDate = toLocalDate(d);
-			return localDate.toLocaleString('et-EE', {
-				day: 'numeric',
-				month: 'short',
-				hour: '2-digit',
-				minute: '2-digit'
-			});
+			const date = new Date(d.timestamp + 'T00:00:00');
+			const dateStr = date.toLocaleDateString('et-EE', { day: 'numeric', month: 'short' });
+			return `${dateStr} ${formatBlockLabel(d.hour)}`;
 		});
 
 		if (chart) {
@@ -91,18 +87,19 @@
 							title: (items) => {
 								const idx = items[0].dataIndex;
 								const d = data[idx];
-								const localDate = toLocalDate(d);
-								return localDate.toLocaleDateString('et-EE', {
+								const date = new Date(d.timestamp + 'T00:00:00');
+								const endHour = (d.hour + 2) % 24;
+								return date.toLocaleDateString('et-EE', {
 									weekday: 'long',
 									day: 'numeric',
 									month: 'long'
-								}) + ` kell ${localDate.getHours()}:00`;
+								}) + ` kell ${d.hour}:00-${endHour}:00`;
 							},
 							afterBody: (items) => {
 								const idx = items[0].dataIndex;
 								const d = data[idx];
 								const total = (d.heating_kwh ?? 0) + (d.dhw_kwh ?? 0) + (d.cooling_kwh ?? 0);
-								return [``, `Kokku: ${total.toFixed(1)} kWh`];
+								return [``, `Kokku: ${total.toFixed(2)} kWh`];
 							}
 						}
 					}
@@ -123,15 +120,14 @@
 							autoSkip: true,
 							maxTicksLimit: 24,
 							callback: function(value, index) {
-								// Show only every 6th hour or day boundaries (in local time)
 								const d = data[index];
-								const localDate = toLocalDate(d);
-								const localHour = localDate.getHours();
-								if (localHour === 0) {
-									return localDate.toLocaleDateString('et-EE', { day: 'numeric', month: 'short' });
+								// Show date at midnight, and time every 6 hours
+								if (d.hour === 0) {
+									const date = new Date(d.timestamp + 'T00:00:00');
+									return date.toLocaleDateString('et-EE', { day: 'numeric', month: 'short' });
 								}
-								if (localHour % 6 === 0) {
-									return `${localHour}:00`;
+								if (d.hour % 6 === 0) {
+									return formatBlockLabel(d.hour);
 								}
 								return null;
 							}

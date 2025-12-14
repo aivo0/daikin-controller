@@ -1,6 +1,7 @@
 import type { PageServerLoad, Actions } from './$types';
 import { createD1Wrapper, getSettings, updateSetting } from '$lib/server/db';
 import { isConnected, getAuthorizationUrl } from '$lib/server/daikin';
+import { planForDate } from '$lib/server/scheduler';
 import { fail, redirect } from '@sveltejs/kit';
 
 export const load: PageServerLoad = async ({ platform, url, locals }) => {
@@ -63,16 +64,12 @@ export const actions: Actions = {
 		const formData = await request.formData();
 
 		try {
-			// Update each setting
+			// Update algorithm settings
 			const settingsToUpdate = [
-				'min_temperature',
-				'base_temperature',
-				'boost_delta',
-				'reduce_delta',
+				'price_sensitivity',
+				'cold_weather_threshold',
+				'planning_hour',
 				'low_price_threshold',
-				'high_price_threshold',
-				'cheapest_hours',
-				'peak_hours_to_avoid',
 				'dhw_min_temp',
 				'dhw_target_temp'
 			];
@@ -84,15 +81,6 @@ export const actions: Actions = {
 				}
 			}
 
-			// Handle strategy toggles
-			const strategies = {
-				threshold: formData.get('strategy_threshold') === 'on',
-				cheapest: formData.get('strategy_cheapest') === 'on',
-				peaks: formData.get('strategy_peaks') === 'on'
-			};
-
-			await updateSetting(db, 'strategies_enabled', JSON.stringify(strategies));
-
 			// Handle DHW enabled toggle
 			const dhwEnabled = formData.get('dhw_enabled') === 'on';
 			await updateSetting(db, 'dhw_enabled', dhwEnabled.toString());
@@ -102,6 +90,37 @@ export const actions: Actions = {
 			console.error('Settings update error:', error);
 			return fail(500, {
 				message: error instanceof Error ? error.message : 'Failed to update settings'
+			});
+		}
+	},
+
+	recalculate: async ({ platform, locals }) => {
+		if (!locals.user) {
+			return fail(401, { message: 'Not authenticated' });
+		}
+
+		if (!platform?.env?.DB) {
+			return fail(500, { message: 'Database not configured' });
+		}
+
+		const db = createD1Wrapper(platform.env.DB);
+
+		try {
+			const today = new Date().toISOString().split('T')[0];
+			const result = await planForDate(db, today);
+
+			if (!result.success) {
+				return fail(500, { message: result.error || 'Planning failed' });
+			}
+
+			return {
+				recalculated: true,
+				hoursPlanned: result.heatingHours?.length ?? 0
+			};
+		} catch (error) {
+			console.error('Recalculate error:', error);
+			return fail(500, {
+				message: error instanceof Error ? error.message : 'Failed to recalculate'
 			});
 		}
 	}

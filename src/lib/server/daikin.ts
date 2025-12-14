@@ -1,6 +1,6 @@
 import type { Database } from './db';
 import { getTokens, saveTokens } from './db';
-import type { DaikinTokens, DaikinDevice, DaikinManagementPoint, DeviceState, DHWState, ConsumptionData } from '$lib/types';
+import type { DaikinTokens, DaikinDevice, DaikinManagementPoint, DeviceState, DHWState, ConsumptionData, ConsumptionBlock, WeeklyConsumption, MonthlyConsumption } from '$lib/types';
 
 const DAIKIN_AUTH_URL = 'https://idp.onecta.daikineurope.com/v1/oidc/authorize';
 const DAIKIN_TOKEN_URL = 'https://idp.onecta.daikineurope.com/v1/oidc/token';
@@ -418,49 +418,94 @@ export async function setDHWTemperature(
 }
 
 /**
- * Sum today's consumption from daily array (d[])
- * The array contains 24 hourly values, we sum non-null values
+ * Sum consumption values from an array
  */
-function sumDailyConsumption(dailyArray: (number | null)[] | undefined): number | null {
-	if (!dailyArray || !Array.isArray(dailyArray)) return null;
-
-	const values = dailyArray.filter((v): v is number => v !== null && typeof v === 'number');
-	if (values.length === 0) return null;
-
-	return values.reduce((sum, v) => sum + v, 0);
+function sumConsumption(values: (number | null)[]): number | null {
+	const nums = values.filter((v): v is number => v !== null && typeof v === 'number');
+	if (nums.length === 0) return null;
+	return nums.reduce((sum, v) => sum + v, 0);
 }
 
 /**
  * Parse energy consumption data from device
- * Returns today's consumption for heating, cooling, and DHW (both sum and hourly)
+ *
+ * Daikin arrays:
+ * - d[] (24 slots): daily 2-hour blocks, d[0-11]=yesterday, d[12-23]=today
+ * - w[] (14 slots): weekly data, index 0 = oldest week (13 weeks ago)
+ * - m[] (24 slots): monthly data, index 0 = oldest month (23 months ago)
  */
 export function parseConsumptionData(device: DaikinDevice): ConsumptionData {
-	let heatingHourly: (number | null)[] = new Array(24).fill(null);
-	let coolingHourly: (number | null)[] = new Array(24).fill(null);
-	let dhwHourly: (number | null)[] = new Array(24).fill(null);
+	const heatingRaw: (number | null)[] = new Array(24).fill(null);
+	const coolingRaw: (number | null)[] = new Array(24).fill(null);
+	const dhwRaw: (number | null)[] = new Array(24).fill(null);
 
-	// Get climate control consumption
+	// Weekly and monthly raw data
+	const heatingWeekly: (number | null)[] = new Array(14).fill(null);
+	const coolingWeekly: (number | null)[] = new Array(14).fill(null);
+	const dhwWeekly: (number | null)[] = new Array(14).fill(null);
+
+	const heatingMonthly: (number | null)[] = new Array(24).fill(null);
+	const coolingMonthly: (number | null)[] = new Array(24).fill(null);
+	const dhwMonthly: (number | null)[] = new Array(24).fill(null);
+
+	// Helper to extract all consumption data from a management point
+	const extractConsumption = (mp: DaikinManagementPoint): {
+		heating_d?: (number | null)[];
+		cooling_d?: (number | null)[];
+		heating_w?: (number | null)[];
+		cooling_w?: (number | null)[];
+		heating_m?: (number | null)[];
+		cooling_m?: (number | null)[];
+	} => {
+		const consumption = mp.consumptionData as {
+			value?: {
+				electrical?: {
+					heating?: { d?: (number | null)[]; w?: (number | null)[]; m?: (number | null)[] };
+					cooling?: { d?: (number | null)[]; w?: (number | null)[]; m?: (number | null)[] };
+				};
+			};
+		} | undefined;
+
+		return {
+			heating_d: consumption?.value?.electrical?.heating?.d,
+			cooling_d: consumption?.value?.electrical?.cooling?.d,
+			heating_w: consumption?.value?.electrical?.heating?.w,
+			cooling_w: consumption?.value?.electrical?.cooling?.w,
+			heating_m: consumption?.value?.electrical?.heating?.m,
+			cooling_m: consumption?.value?.electrical?.cooling?.m
+		};
+	};
+
+	// Get climateControl consumption (heating/cooling)
 	const climateControl = device.managementPoints.find(
 		(mp) => mp.managementPointType === 'climateControl'
 	);
 
 	if (climateControl) {
-		const consumption = climateControl.consumptionData as {
-			value?: {
-				electrical?: {
-					heating?: { d?: (number | null)[] };
-					cooling?: { d?: (number | null)[] };
-				};
-			};
-		} | undefined;
+		const data = extractConsumption(climateControl);
 
-		if (consumption?.value?.electrical) {
-			if (consumption.value.electrical.heating?.d) {
-				heatingHourly = consumption.value.electrical.heating.d.slice(0, 24);
-			}
-			if (consumption.value.electrical.cooling?.d) {
-				coolingHourly = consumption.value.electrical.cooling.d.slice(0, 24);
-			}
+		// Daily data
+		if (data.heating_d) {
+			data.heating_d.slice(0, 24).forEach((v, i) => { heatingRaw[i] = v; });
+		}
+		if (data.cooling_d) {
+			data.cooling_d.slice(0, 24).forEach((v, i) => { coolingRaw[i] = v; });
+		}
+
+		// Weekly data
+		if (data.heating_w) {
+			data.heating_w.slice(0, 14).forEach((v, i) => { heatingWeekly[i] = v; });
+		}
+		if (data.cooling_w) {
+			data.cooling_w.slice(0, 14).forEach((v, i) => { coolingWeekly[i] = v; });
+		}
+
+		// Monthly data
+		if (data.heating_m) {
+			data.heating_m.slice(0, 24).forEach((v, i) => { heatingMonthly[i] = v; });
+		}
+		if (data.cooling_m) {
+			data.cooling_m.slice(0, 24).forEach((v, i) => { coolingMonthly[i] = v; });
 		}
 	}
 
@@ -470,25 +515,119 @@ export function parseConsumptionData(device: DaikinDevice): ConsumptionData {
 	);
 
 	if (dhw) {
-		const consumption = dhw.consumptionData as {
-			value?: {
-				electrical?: {
-					heating?: { d?: (number | null)[] };
-				};
-			};
-		} | undefined;
+		const data = extractConsumption(dhw);
 
-		if (consumption?.value?.electrical?.heating?.d) {
-			dhwHourly = consumption.value.electrical.heating.d.slice(0, 24);
+		// Daily data
+		if (data.heating_d) {
+			data.heating_d.slice(0, 24).forEach((v, i) => { dhwRaw[i] = v; });
+		}
+
+		// Weekly data
+		if (data.heating_w) {
+			data.heating_w.slice(0, 14).forEach((v, i) => { dhwWeekly[i] = v; });
+		}
+
+		// Monthly data
+		if (data.heating_m) {
+			data.heating_m.slice(0, 24).forEach((v, i) => { dhwMonthly[i] = v; });
 		}
 	}
 
+	// Calculate dates
+	const now = new Date();
+	const today = now.toISOString().split('T')[0];
+	const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+	// Build daily consumption blocks
+	// d[0-11] = yesterday, d[12-23] = today
+	// Each index maps to a 2-hour block: index % 12 * 2 = start hour
+	const blocks: ConsumptionBlock[] = [];
+
+	for (let i = 0; i < 24; i++) {
+		const isToday = i >= 12;
+		const date = isToday ? today : yesterday;
+		const startHour = (i % 12) * 2;
+
+		const heating = heatingRaw[i];
+		const cooling = coolingRaw[i];
+		const dhwVal = dhwRaw[i];
+
+		if (heating !== null || cooling !== null || dhwVal !== null) {
+			blocks.push({
+				date,
+				startHour,
+				heating_kwh: heating,
+				cooling_kwh: cooling,
+				dhw_kwh: dhwVal
+			});
+		}
+	}
+
+	// Build weekly consumption array
+	// w[0] = oldest week (13 weeks ago), w[13] = current week
+	const weekly: WeeklyConsumption[] = [];
+	for (let i = 0; i < 14; i++) {
+		const weeksAgo = 13 - i;
+		const weekStart = getWeekStart(new Date(now.getTime() - weeksAgo * 7 * 24 * 60 * 60 * 1000));
+
+		const heating = heatingWeekly[i];
+		const cooling = coolingWeekly[i];
+		const dhwVal = dhwWeekly[i];
+
+		if (heating !== null || cooling !== null || dhwVal !== null) {
+			weekly.push({
+				week_start: weekStart,
+				heating_kwh: heating,
+				cooling_kwh: cooling,
+				dhw_kwh: dhwVal
+			});
+		}
+	}
+
+	// Build monthly consumption array
+	// m[0] = oldest month (23 months ago), m[23] = current month
+	const monthly: MonthlyConsumption[] = [];
+	for (let i = 0; i < 24; i++) {
+		const monthsAgo = 23 - i;
+		const monthDate = new Date(now.getFullYear(), now.getMonth() - monthsAgo, 1);
+		const month = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, '0')}`;
+
+		const heating = heatingMonthly[i];
+		const cooling = coolingMonthly[i];
+		const dhwVal = dhwMonthly[i];
+
+		if (heating !== null || cooling !== null || dhwVal !== null) {
+			monthly.push({
+				month,
+				heating_kwh: heating,
+				cooling_kwh: cooling,
+				dhw_kwh: dhwVal
+			});
+		}
+	}
+
+	// Sum only today's values (d[12-23])
+	const todayHeating = sumConsumption(heatingRaw.slice(12, 24));
+	const todayCooling = sumConsumption(coolingRaw.slice(12, 24));
+	const todayDhw = sumConsumption(dhwRaw.slice(12, 24));
+
 	return {
-		heating_today_kwh: sumDailyConsumption(heatingHourly),
-		cooling_today_kwh: sumDailyConsumption(coolingHourly),
-		dhw_today_kwh: sumDailyConsumption(dhwHourly),
-		heating_hourly: heatingHourly,
-		cooling_hourly: coolingHourly,
-		dhw_hourly: dhwHourly
+		heating_today_kwh: todayHeating,
+		cooling_today_kwh: todayCooling,
+		dhw_today_kwh: todayDhw,
+		blocks,
+		weekly,
+		monthly
 	};
+}
+
+/**
+ * Get the Monday of the week for a given date (ISO week start)
+ */
+function getWeekStart(date: Date): string {
+	const d = new Date(date);
+	const day = d.getDay();
+	const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Sunday
+	d.setDate(diff);
+	return d.toISOString().split('T')[0];
 }

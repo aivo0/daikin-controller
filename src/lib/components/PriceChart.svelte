@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { Chart, registerables } from 'chart.js';
-	import type { HourlyPrice } from '$lib/types';
+	import type { HourlyPrice, PlannedHeatingHour } from '$lib/types';
 
 	Chart.register(...registerables);
 
-	let { prices }: { prices: HourlyPrice[] } = $props();
+	interface HeatingScheduleWithDate extends PlannedHeatingHour {
+		date: string;
+	}
+
+	let { prices, heatingSchedule = [] }: { prices: HourlyPrice[]; heatingSchedule?: HeatingScheduleWithDate[] } = $props();
 
 	let canvas: HTMLCanvasElement;
 	let chart: Chart | null = null;
@@ -75,6 +79,19 @@
 		return result;
 	});
 
+	// Create offset lookup map: "YYYY-MM-DD-HH" -> offset
+	const offsetMap = $derived(() => {
+		const map = new Map<string, number>();
+		for (const h of heatingSchedule) {
+			const key = `${h.date}-${h.hour.toString().padStart(2, '0')}`;
+			map.set(key, h.planned_offset);
+		}
+		return map;
+	});
+
+	// Check if we have heating schedule data
+	const hasHeatingSchedule = $derived(() => heatingSchedule.length > 0);
+
 	function getPointColors(prices: HourlyPrice[]): string[] {
 		return prices.map(p => {
 			if (p.isCheap) return 'rgb(0, 200, 83)'; // green
@@ -110,29 +127,68 @@
 			lastDate = dateStr;
 		});
 
+		// Build offset data array matching price data
+		const offsets = offsetMap();
+		const offsetData = priceData.map(p => {
+			const date = new Date(p.timestamp);
+			const dateStr = date.toISOString().split('T')[0];
+			const hourStr = date.getHours().toString().padStart(2, '0');
+			const key = `${dateStr}-${hourStr}`;
+			return offsets.get(key) ?? null;
+		});
+
 		if (chart) {
 			chart.destroy();
 		}
 
 		const ctx = canvas.getContext('2d')!;
 
+		// Build datasets
+		const datasets: any[] = [{
+			label: 'Hind',
+			data: priceData.map(p => p.price),
+			borderWidth: 2,
+			pointRadius: 0,
+			pointHoverRadius: 6,
+			pointHoverBackgroundColor: getPointColors(priceData),
+			tension: 0.1,
+			fill: true,
+			backgroundColor: 'rgba(99, 102, 241, 0.1)',
+			segment: {
+				borderColor: (ctx: any) => getSegmentColor(ctx, priceData)
+			},
+			yAxisID: 'y'
+		}];
+
+		// Add offset dataset if we have data
+		if (hasHeatingSchedule()) {
+			datasets.push({
+				label: 'Kütte nihe',
+				data: offsetData,
+				borderWidth: 2,
+				borderColor: 'rgba(251, 146, 60, 0.9)',
+				backgroundColor: 'rgba(251, 146, 60, 0.2)',
+				pointRadius: 3,
+				pointBackgroundColor: (ctx: any) => {
+					const value = ctx.raw as number | null;
+					if (value === null) return 'transparent';
+					if (value > 0) return 'rgb(74, 222, 128)';
+					if (value < 0) return 'rgb(248, 113, 113)';
+					return 'rgb(251, 146, 60)';
+				},
+				pointBorderColor: 'transparent',
+				tension: 0,
+				stepped: 'middle',
+				fill: false,
+				yAxisID: 'y1'
+			});
+		}
+
 		chart = new Chart(ctx, {
 			type: 'line',
 			data: {
 				labels,
-				datasets: [{
-					data: priceData.map(p => p.price),
-					borderWidth: 2,
-					pointRadius: 0,
-					pointHoverRadius: 6,
-					pointHoverBackgroundColor: getPointColors(priceData),
-					tension: 0.1,
-					fill: true,
-					backgroundColor: 'rgba(99, 102, 241, 0.1)',
-					segment: {
-						borderColor: (ctx) => getSegmentColor(ctx, priceData)
-					}
-				}]
+				datasets
 			},
 			options: {
 				responsive: true,
@@ -143,7 +199,16 @@
 				},
 				plugins: {
 					legend: {
-						display: false
+						display: hasHeatingSchedule(),
+						position: 'top',
+						align: 'end',
+						labels: {
+							boxWidth: 12,
+							boxHeight: 2,
+							color: '#a1a1aa',
+							font: { size: 11 },
+							usePointStyle: false
+						}
 					},
 					tooltip: {
 						backgroundColor: 'rgba(0, 0, 0, 0.8)',
@@ -162,8 +227,15 @@
 								}) + ' ' + date.getHours() + ':00';
 							},
 							label: (item) => {
-								const price = item.raw as number;
-								return `${price.toFixed(2)} senti/kWh`;
+								if (item.datasetIndex === 0) {
+									const price = item.raw as number;
+									return `Hind: ${price.toFixed(2)} s/kWh`;
+								} else {
+									const offset = item.raw as number | null;
+									if (offset === null) return '';
+									const sign = offset > 0 ? '+' : '';
+									return `Kütte nihe: ${sign}${offset}`;
+								}
 							}
 						}
 					}
@@ -197,7 +269,9 @@
 						}
 					},
 					y: {
+						type: 'linear',
 						display: true,
+						position: 'left',
 						beginAtZero: true,
 						grid: {
 							display: true,
@@ -208,6 +282,26 @@
 							color: '#a1a1aa',
 							font: { size: 12, weight: 500 },
 							callback: (value) => value + ' s/kWh'
+						}
+					},
+					y1: {
+						type: 'linear',
+						display: hasHeatingSchedule(),
+						position: 'right',
+						min: -10,
+						max: 10,
+						grid: {
+							display: false
+						},
+						ticks: {
+							display: true,
+							color: 'rgba(251, 146, 60, 0.8)',
+							font: { size: 11, weight: 500 },
+							stepSize: 5,
+							callback: (value) => {
+								if (value === 0) return '0';
+								return (value > 0 ? '+' : '') + value;
+							}
 						}
 					}
 				}
@@ -246,8 +340,9 @@
 	}
 
 	$effect(() => {
-		// Reactively update chart when prices change
+		// Reactively update chart when prices or schedule change
 		hourlyPrices();
+		offsetMap();
 		if (canvas) {
 			createChart();
 		}
@@ -272,7 +367,7 @@
 			<span class="opacity-70">Kesk: <span class="font-medium">{stats().avg.toFixed(1)} s</span></span>
 			<span class="opacity-70">Max: <span class="text-error font-medium">{stats().max.toFixed(1)} s</span></span>
 		</div>
-		<div class="flex gap-4">
+		<div class="flex gap-4 flex-wrap">
 			<div class="flex items-center gap-1">
 				<div class="w-3 h-0.5 bg-success"></div>
 				<span class="opacity-70">Odav</span>
@@ -285,6 +380,12 @@
 				<div class="w-3 h-0.5 bg-warning border-dashed"></div>
 				<span class="opacity-70">Praegu</span>
 			</div>
+			{#if hasHeatingSchedule()}
+				<div class="flex items-center gap-1">
+					<div class="w-3 h-0.5" style="background-color: rgb(251, 146, 60);"></div>
+					<span class="opacity-70">Kütte nihe</span>
+				</div>
+			{/if}
 		</div>
 	</div>
 

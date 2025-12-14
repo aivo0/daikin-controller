@@ -10,7 +10,9 @@
 			boost: 'KÜTMINE',
 			normal: 'TAVALINE',
 			reduce: 'VÄHENDATUD',
-			none: 'PUUDUB'
+			none: 'PUUDUB',
+			dhw_boost: 'BOILER +',
+			dhw_reduce: 'BOILER −'
 		};
 		return translations[action] || action.toUpperCase();
 	}
@@ -27,7 +29,7 @@
 	<div class="card-body">
 		<h2 class="card-title">Elektrihind</h2>
 		{#if data.prices.length > 0}
-			<PriceChart prices={data.prices} />
+			<PriceChart prices={data.prices} heatingSchedule={data.heatingSchedule} />
 		{:else}
 			<p class="text-center py-8 opacity-50">Hinnaandmed puuduvad</p>
 		{/if}

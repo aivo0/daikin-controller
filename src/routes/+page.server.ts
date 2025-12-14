@@ -1,8 +1,9 @@
 import type { PageServerLoad } from './$types';
-import { createD1Wrapper, getLatestDeviceState, getSettings } from '$lib/server/db';
+import { createD1Wrapper, getLatestDeviceState, getSettings, getHeatingScheduleForDate } from '$lib/server/db';
 import { getHourlyPricesWithAnalysis, getCurrentHourPrice, eurMwhToCentKwh } from '$lib/server/elering';
 import { isConnected } from '$lib/server/daikin';
 import { previewControlAction } from '$lib/server/scheduler';
+import type { PlannedHeatingHour } from '$lib/types';
 
 export const load: PageServerLoad = async ({ platform, locals }) => {
 	const isAuthenticated = !!locals.user;
@@ -15,6 +16,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 			currentPrice: null,
 			settings: null,
 			nextAction: null,
+			heatingSchedule: [] as PlannedHeatingHour[],
 			isConnected: false,
 			isAuthenticated
 		};
@@ -34,14 +36,35 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 		let settings = null;
 		let connected = false;
 		let nextAction = null;
+		let heatingSchedule: PlannedHeatingHour[] = [];
 
 		if (isAuthenticated) {
-			[deviceState, settings, connected, nextAction] = await Promise.all([
+			// Get today and tomorrow dates
+			const now = new Date();
+			const todayStr = now.toISOString().split('T')[0];
+			const tomorrow = new Date(now);
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			const tomorrowStr = tomorrow.toISOString().split('T')[0];
+
+			const [deviceStateResult, settingsResult, connectedResult, nextActionResult, todaySchedule, tomorrowSchedule] = await Promise.all([
 				getLatestDeviceState(db),
 				getSettings(db),
 				isConnected(db),
-				previewControlAction(db)
+				previewControlAction(db),
+				getHeatingScheduleForDate(db, todayStr),
+				getHeatingScheduleForDate(db, tomorrowStr)
 			]);
+
+			deviceState = deviceStateResult;
+			settings = settingsResult;
+			connected = connectedResult;
+			nextAction = nextActionResult;
+
+			// Combine schedules with date prefix for proper timestamp matching
+			heatingSchedule = [
+				...todaySchedule.map(h => ({ ...h, date: todayStr })),
+				...tomorrowSchedule.map(h => ({ ...h, date: tomorrowStr }))
+			];
 		}
 
 		return {
@@ -50,6 +73,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 			currentPrice: currentPriceEurMwh !== null ? eurMwhToCentKwh(currentPriceEurMwh) : null,
 			settings,
 			nextAction,
+			heatingSchedule,
 			isConnected: connected,
 			isAuthenticated,
 			error: null
@@ -63,6 +87,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 			currentPrice: null,
 			settings: null,
 			nextAction: null,
+			heatingSchedule: [] as PlannedHeatingHour[],
 			isConnected: false,
 			isAuthenticated
 		};

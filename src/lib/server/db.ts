@@ -1,4 +1,4 @@
-import type { Settings, PriceData, DeviceState, ControlLogEntry, DaikinTokens, ConsumptionData, HourlyConsumption } from '$lib/types';
+import type { Settings, PriceData, DeviceState, ControlLogEntry, DaikinTokens, ConsumptionData, HourlyConsumption, WeeklyConsumption, MonthlyConsumption, PlannedHeatingHour, PlannedDHWHour, DailySchedule } from '$lib/types';
 
 // Database interface that works with both D1 and better-sqlite3
 export interface Database {
@@ -53,8 +53,14 @@ export async function getSettings(db: Database): Promise<Settings> {
 		best_price_window_hours: parseInt(settingsMap.get('best_price_window_hours') || '6'),
 		// DHW (sooja vee boiler) settings - range 30-60°C
 		dhw_enabled: settingsMap.get('dhw_enabled') === 'true',
-		dhw_min_temp: parseFloat(settingsMap.get('dhw_min_temp') || '42'),
-		dhw_target_temp: parseFloat(settingsMap.get('dhw_target_temp') || '55')
+		dhw_min_temp: parseFloat(settingsMap.get('dhw_min_temp') || '30'),
+		dhw_target_temp: parseFloat(settingsMap.get('dhw_target_temp') || '60'),
+		// New algorithm settings (daily planning)
+		price_sensitivity: parseFloat(settingsMap.get('price_sensitivity') || '7'),
+		cold_weather_threshold: parseFloat(settingsMap.get('cold_weather_threshold') || '-5'),
+		planning_hour: parseInt(settingsMap.get('planning_hour') || '15'),
+		weather_location_lat: parseFloat(settingsMap.get('weather_location_lat') || '59.3'),
+		weather_location_lon: parseFloat(settingsMap.get('weather_location_lon') || '24.7')
 	};
 }
 
@@ -257,33 +263,59 @@ export async function getRecentControlLogs(
 }
 
 // Energy consumption helpers
+// Note: Daikin API returns null for timeslots where data is not yet available.
+// We must NOT overwrite existing values with null - only update when we have actual data.
 export async function saveHourlyConsumption(
 	db: Database,
-	dateStr: string,
 	consumption: ConsumptionData
 ): Promise<void> {
-	// Save each hour's consumption
-	for (let hour = 0; hour < 24; hour++) {
-		const heating = consumption.heating_hourly[hour];
-		const cooling = consumption.cooling_hourly[hour];
-		const dhw = consumption.dhw_hourly[hour];
+	// Save each 2-hour block from the consumption data
+	for (const block of consumption.blocks) {
+		await db.run(
+			`INSERT INTO energy_consumption (timestamp, hour, heating_kwh, cooling_kwh, dhw_kwh)
+			 VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT(timestamp, hour) DO UPDATE SET
+			   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
+			   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
+			   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
+			block.date,
+			block.startHour,
+			block.heating_kwh,
+			block.cooling_kwh,
+			block.dhw_kwh
+		);
+	}
 
-		// Only save if we have any data for this hour
-		if (heating !== null || cooling !== null || dhw !== null) {
-			await db.run(
-				`INSERT INTO energy_consumption (timestamp, hour, heating_kwh, cooling_kwh, dhw_kwh)
-				 VALUES (?, ?, ?, ?, ?)
-				 ON CONFLICT(timestamp, hour) DO UPDATE SET
-				   heating_kwh = excluded.heating_kwh,
-				   cooling_kwh = excluded.cooling_kwh,
-				   dhw_kwh = excluded.dhw_kwh`,
-				dateStr,
-				hour,
-				heating,
-				cooling,
-				dhw
-			);
-		}
+	// Save weekly consumption data
+	for (const week of consumption.weekly) {
+		await db.run(
+			`INSERT INTO weekly_consumption (week_start, heating_kwh, cooling_kwh, dhw_kwh)
+			 VALUES (?, ?, ?, ?)
+			 ON CONFLICT(week_start) DO UPDATE SET
+			   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
+			   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
+			   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
+			week.week_start,
+			week.heating_kwh,
+			week.cooling_kwh,
+			week.dhw_kwh
+		);
+	}
+
+	// Save monthly consumption data
+	for (const month of consumption.monthly) {
+		await db.run(
+			`INSERT INTO monthly_consumption (month, heating_kwh, cooling_kwh, dhw_kwh)
+			 VALUES (?, ?, ?, ?)
+			 ON CONFLICT(month) DO UPDATE SET
+			   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
+			   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
+			   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
+			month.month,
+			month.heating_kwh,
+			month.cooling_kwh,
+			month.dhw_kwh
+		);
 	}
 }
 
@@ -299,4 +331,241 @@ export async function getHourlyConsumption(
 		 ORDER BY timestamp, hour`,
 		since
 	);
+}
+
+export async function getWeeklyConsumption(
+	db: Database,
+	weeks: number = 14
+): Promise<WeeklyConsumption[]> {
+	return db.all<WeeklyConsumption>(
+		`SELECT week_start, heating_kwh, cooling_kwh, dhw_kwh
+		 FROM weekly_consumption
+		 ORDER BY week_start DESC
+		 LIMIT ?`,
+		weeks
+	);
+}
+
+export async function getMonthlyConsumption(
+	db: Database,
+	months: number = 24
+): Promise<MonthlyConsumption[]> {
+	return db.all<MonthlyConsumption>(
+		`SELECT month, heating_kwh, cooling_kwh, dhw_kwh
+		 FROM monthly_consumption
+		 ORDER BY month DESC
+		 LIMIT ?`,
+		months
+	);
+}
+
+// ============================================
+// Heating Schedule (Daily Planning) Helpers
+// ============================================
+
+/**
+ * Save a daily heating schedule
+ */
+export async function saveHeatingSchedule(
+	db: Database,
+	date: string,
+	hours: PlannedHeatingHour[]
+): Promise<void> {
+	for (const hour of hours) {
+		await db.run(
+			`INSERT INTO heating_schedule (date, hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(date, hour) DO UPDATE SET
+         planned_offset = excluded.planned_offset,
+         outdoor_temp_forecast = excluded.outdoor_temp_forecast,
+         price_cent_kwh = excluded.price_cent_kwh,
+         reason = excluded.reason,
+         created_at = datetime('now'),
+         applied_at = NULL`,
+			date,
+			hour.hour,
+			hour.planned_offset,
+			hour.outdoor_temp_forecast,
+			hour.price_cent_kwh,
+			hour.reason
+		);
+	}
+}
+
+/**
+ * Get the heating schedule for a specific date
+ */
+export async function getHeatingScheduleForDate(
+	db: Database,
+	date: string
+): Promise<PlannedHeatingHour[]> {
+	const rows = await db.all<{
+		hour: number;
+		planned_offset: number;
+		outdoor_temp_forecast: number | null;
+		price_cent_kwh: number;
+		reason: string;
+	}>(
+		'SELECT hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason FROM heating_schedule WHERE date = ? ORDER BY hour',
+		date
+	);
+
+	return rows.map(row => ({
+		hour: row.hour,
+		planned_offset: row.planned_offset,
+		outdoor_temp_forecast: row.outdoor_temp_forecast,
+		price_cent_kwh: row.price_cent_kwh,
+		reason: row.reason
+	}));
+}
+
+/**
+ * Get the planned offset for a specific hour
+ */
+export async function getPlannedOffsetForHour(
+	db: Database,
+	date: string,
+	hour: number
+): Promise<number | null> {
+	const row = await db.get<{ planned_offset: number }>(
+		'SELECT planned_offset FROM heating_schedule WHERE date = ? AND hour = ?',
+		date,
+		hour
+	);
+	return row?.planned_offset ?? null;
+}
+
+/**
+ * Mark a scheduled hour as applied
+ */
+export async function markHeatingScheduleApplied(
+	db: Database,
+	date: string,
+	hour: number
+): Promise<void> {
+	await db.run(
+		`UPDATE heating_schedule SET applied_at = datetime('now') WHERE date = ? AND hour = ?`,
+		date,
+		hour
+	);
+}
+
+// ============================================
+// DHW Schedule (Daily Planning) Helpers
+// ============================================
+
+/**
+ * Save a daily DHW schedule
+ */
+export async function saveDHWSchedule(
+	db: Database,
+	date: string,
+	hours: PlannedDHWHour[]
+): Promise<void> {
+	for (const hour of hours) {
+		await db.run(
+			`INSERT INTO dhw_schedule (date, hour, planned_temp, price_cent_kwh, reason)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(date, hour) DO UPDATE SET
+         planned_temp = excluded.planned_temp,
+         price_cent_kwh = excluded.price_cent_kwh,
+         reason = excluded.reason,
+         created_at = datetime('now'),
+         applied_at = NULL`,
+			date,
+			hour.hour,
+			hour.planned_temp,
+			hour.price_cent_kwh,
+			hour.reason
+		);
+	}
+}
+
+/**
+ * Get the DHW schedule for a specific date
+ */
+export async function getDHWScheduleForDate(
+	db: Database,
+	date: string
+): Promise<PlannedDHWHour[]> {
+	const rows = await db.all<{
+		hour: number;
+		planned_temp: number;
+		price_cent_kwh: number;
+		reason: string;
+	}>(
+		'SELECT hour, planned_temp, price_cent_kwh, reason FROM dhw_schedule WHERE date = ? ORDER BY hour',
+		date
+	);
+
+	return rows.map(row => ({
+		hour: row.hour,
+		planned_temp: row.planned_temp,
+		price_cent_kwh: row.price_cent_kwh,
+		reason: row.reason
+	}));
+}
+
+/**
+ * Get the planned DHW temperature for a specific hour
+ */
+export async function getPlannedDHWTempForHour(
+	db: Database,
+	date: string,
+	hour: number
+): Promise<number | null> {
+	const row = await db.get<{ planned_temp: number }>(
+		'SELECT planned_temp FROM dhw_schedule WHERE date = ? AND hour = ?',
+		date,
+		hour
+	);
+	return row?.planned_temp ?? null;
+}
+
+/**
+ * Mark a DHW scheduled hour as applied
+ */
+export async function markDHWScheduleApplied(
+	db: Database,
+	date: string,
+	hour: number
+): Promise<void> {
+	await db.run(
+		`UPDATE dhw_schedule SET applied_at = datetime('now') WHERE date = ? AND hour = ?`,
+		date,
+		hour
+	);
+}
+
+/**
+ * Get the full daily schedule (heating + DHW)
+ */
+export async function getDailySchedule(
+	db: Database,
+	date: string
+): Promise<DailySchedule | null> {
+	const heating = await getHeatingScheduleForDate(db, date);
+	const dhw = await getDHWScheduleForDate(db, date);
+
+	if (heating.length === 0 && dhw.length === 0) {
+		return null;
+	}
+
+	return {
+		date,
+		heating,
+		dhw
+	};
+}
+
+/**
+ * Clean up old schedules (older than 7 days)
+ */
+export async function cleanupOldSchedules(db: Database): Promise<void> {
+	const cutoff = new Date();
+	cutoff.setDate(cutoff.getDate() - 7);
+	const cutoffStr = cutoff.toISOString().split('T')[0];
+
+	await db.run('DELETE FROM heating_schedule WHERE date < ?', cutoffStr);
+	await db.run('DELETE FROM dhw_schedule WHERE date < ?', cutoffStr);
 }

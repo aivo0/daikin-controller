@@ -16,8 +16,10 @@
 	function getActionBadgeClass(action: string): string {
 		switch (action) {
 			case 'boost':
+			case 'dhw_boost':
 				return 'badge-success';
 			case 'reduce':
+			case 'dhw_reduce':
 				return 'badge-error';
 			case 'normal':
 				return 'badge-warning';
@@ -31,7 +33,9 @@
 			boost: 'KÜTMINE',
 			normal: 'TAVALINE',
 			reduce: 'VÄHENDATUD',
-			none: 'PUUDUB'
+			none: 'PUUDUB',
+			dhw_boost: 'BOILER +',
+			dhw_reduce: 'BOILER −'
 		};
 		return translations[action] || action.toUpperCase();
 	}
