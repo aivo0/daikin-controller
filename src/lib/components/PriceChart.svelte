@@ -128,11 +128,12 @@
 		});
 
 		// Build offset data array matching price data
+		// IMPORTANT: Use UTC hours since the server stores schedules with UTC hours
 		const offsets = offsetMap();
 		const offsetData = priceData.map(p => {
 			const date = new Date(p.timestamp);
 			const dateStr = date.toISOString().split('T')[0];
-			const hourStr = date.getHours().toString().padStart(2, '0');
+			const hourStr = date.getUTCHours().toString().padStart(2, '0');
 			const key = `${dateStr}-${hourStr}`;
 			return offsets.get(key) ?? null;
 		});
@@ -290,6 +291,7 @@
 						position: 'right',
 						min: -10,
 						max: 10,
+						reverse: true,
 						grid: {
 							display: false
 						},

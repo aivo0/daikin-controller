@@ -88,12 +88,12 @@ export function calculatePriceProportionalOffsets(
 	const coldThreshold = settings.cold_weather_threshold; // Default: -5
 
 	// Aggregate prices by date+hour (in case we have sub-hourly data)
-	// Key: "YYYY-MM-DD-HH"
+	// Key: "YYYY-MM-DD-HH" (using UTC to match browser display)
 	const hourlyPrices = new Map<string, { prices: number[], date: string, hour: number }>();
 	for (const p of prices) {
 		const d = new Date(p.timestamp);
 		const dateStr = d.toISOString().split('T')[0];
-		const hour = d.getHours();
+		const hour = d.getUTCHours();
 		const key = `${dateStr}-${hour.toString().padStart(2, '0')}`;
 		const priceCentKwh = eurMwhToCentKwh(p.price_eur_mwh);
 		if (!hourlyPrices.has(key)) {
@@ -121,12 +121,12 @@ export function calculatePriceProportionalOffsets(
 	// Avoid division by zero if all prices are the same
 	const halfSpread = priceSpread > 0 ? priceSpread / 2 : 1;
 
-	// Create weather lookup by date+hour key
+	// Create weather lookup by date+hour key (using UTC to match price keys)
 	const weatherByKey = new Map<string, number>();
 	for (const w of weather) {
 		const d = new Date(w.timestamp);
 		const dateStr = d.toISOString().split('T')[0];
-		const hour = d.getHours();
+		const hour = d.getUTCHours();
 		const key = `${dateStr}-${hour.toString().padStart(2, '0')}`;
 		weatherByKey.set(key, w.temperature_2m);
 	}
@@ -234,12 +234,12 @@ export function calculateDHWProportionalTemps(
 	const tempRange = maxTemp - minTemp; // 25°C
 
 	// Aggregate prices by date+hour (in case we have sub-hourly data)
-	// Key: "YYYY-MM-DD-HH"
+	// Key: "YYYY-MM-DD-HH" (using UTC to match browser display)
 	const hourlyPrices = new Map<string, { prices: number[], date: string, hour: number }>();
 	for (const p of prices) {
 		const d = new Date(p.timestamp);
 		const dateStr = d.toISOString().split('T')[0];
-		const hour = d.getHours();
+		const hour = d.getUTCHours();
 		const key = `${dateStr}-${hour.toString().padStart(2, '0')}`;
 		const priceCentKwh = eurMwhToCentKwh(p.price_eur_mwh);
 		if (!hourlyPrices.has(key)) {
@@ -345,9 +345,9 @@ export async function executeDailyPlanning(
 	try {
 		const effectiveSettings = settings || await getSettings(db);
 
-		// Get current time info
+		// Get current time info (use UTC since price timestamps are in UTC)
 		const now = new Date();
-		const currentHour = now.getHours();
+		const currentHour = now.getUTCHours();
 		const todayStr = now.toISOString().split('T')[0];
 		const tomorrow = new Date(now);
 		tomorrow.setDate(tomorrow.getDate() + 1);
@@ -356,7 +356,7 @@ export async function executeDailyPlanning(
 		// Get today's prices (will filter to remaining hours)
 		const todayPrices = await getTodayPrices(db);
 		const remainingTodayPrices = todayPrices.filter(p => {
-			const hour = new Date(p.timestamp).getHours();
+			const hour = new Date(p.timestamp).getUTCHours();
 			return hour >= currentHour;
 		});
 
