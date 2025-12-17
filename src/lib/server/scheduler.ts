@@ -1,6 +1,7 @@
 import type { Database } from './db';
 import {
 	getSettings,
+	updateSetting,
 	logControlAction,
 	saveDeviceState,
 	saveHourlyConsumption,
@@ -62,15 +63,17 @@ export interface DailyPlanningResult {
 }
 
 /**
- * Calculate price-proportional heating offsets for a full day
+ * Calculate price-proportional heating offsets for all available hours
  *
  * Algorithm:
- * 1. Calculate price statistics (median, spread)
+ * 1. Calculate price statistics (median, spread) across ALL hours
  * 2. Normalize prices to [-1, +1] range relative to median
  * 3. Apply price sensitivity constant K to get raw offset
  * 4. Apply 50% guarantee: cheapest 50% of hours get offset >= 0
  * 5. Apply cold weather adjustment: reduce penalty when very cold
  * 6. Clamp to valid range [-10, +10]
+ *
+ * Supports multi-day planning by keying on date+hour
  */
 export function calculatePriceProportionalOffsets(
 	prices: PriceData[],
@@ -84,21 +87,27 @@ export function calculatePriceProportionalOffsets(
 	const K = settings.price_sensitivity; // Default: 7
 	const coldThreshold = settings.cold_weather_threshold; // Default: -5
 
-	// Aggregate prices by hour (in case we have sub-hourly data)
-	const hourlyPrices = new Map<number, number[]>();
+	// Aggregate prices by date+hour (in case we have sub-hourly data)
+	// Key: "YYYY-MM-DD-HH"
+	const hourlyPrices = new Map<string, { prices: number[], date: string, hour: number }>();
 	for (const p of prices) {
-		const hour = new Date(p.timestamp).getHours();
+		const d = new Date(p.timestamp);
+		const dateStr = d.toISOString().split('T')[0];
+		const hour = d.getHours();
+		const key = `${dateStr}-${hour.toString().padStart(2, '0')}`;
 		const priceCentKwh = eurMwhToCentKwh(p.price_eur_mwh);
-		if (!hourlyPrices.has(hour)) {
-			hourlyPrices.set(hour, []);
+		if (!hourlyPrices.has(key)) {
+			hourlyPrices.set(key, { prices: [], date: dateStr, hour });
 		}
-		hourlyPrices.get(hour)!.push(priceCentKwh);
+		hourlyPrices.get(key)!.prices.push(priceCentKwh);
 	}
 
-	// Calculate average price per hour
-	const pricesCentKwh = Array.from(hourlyPrices.entries()).map(([hour, prices]) => ({
-		hour,
-		price: prices.reduce((a, b) => a + b, 0) / prices.length
+	// Calculate average price per date+hour
+	const pricesCentKwh = Array.from(hourlyPrices.entries()).map(([key, data]) => ({
+		key,
+		date: data.date,
+		hour: data.hour,
+		price: data.prices.reduce((a, b) => a + b, 0) / data.prices.length
 	}));
 
 	// Calculate price statistics
@@ -112,11 +121,14 @@ export function calculatePriceProportionalOffsets(
 	// Avoid division by zero if all prices are the same
 	const halfSpread = priceSpread > 0 ? priceSpread / 2 : 1;
 
-	// Create weather lookup by hour
-	const weatherByHour = new Map<number, number>();
+	// Create weather lookup by date+hour key
+	const weatherByKey = new Map<string, number>();
 	for (const w of weather) {
-		const hour = new Date(w.timestamp).getHours();
-		weatherByHour.set(hour, w.temperature_2m);
+		const d = new Date(w.timestamp);
+		const dateStr = d.toISOString().split('T')[0];
+		const hour = d.getHours();
+		const key = `${dateStr}-${hour.toString().padStart(2, '0')}`;
+		weatherByKey.set(key, w.temperature_2m);
 	}
 
 	// Calculate raw offsets
@@ -129,6 +141,8 @@ export function calculatePriceProportionalOffsets(
 		const rawOffset = -K * normalizedDeviation;
 
 		return {
+			key: p.key,
+			date: p.date,
 			hour: p.hour,
 			price: p.price,
 			rawOffset
@@ -137,18 +151,18 @@ export function calculatePriceProportionalOffsets(
 
 	// Sort by price to identify cheapest 50%
 	const sortedByPrice = [...rawOffsets].sort((a, b) => a.price - b.price);
-	const cheapestHalfHours = new Set(
-		sortedByPrice.slice(0, Math.ceil(sortedByPrice.length / 2)).map(h => h.hour)
+	const cheapestHalfKeys = new Set(
+		sortedByPrice.slice(0, Math.ceil(sortedByPrice.length / 2)).map(h => h.key)
 	);
 
 	// Apply 50% guarantee and cold weather adjustment
 	const plannedHours: PlannedHeatingHour[] = rawOffsets.map(h => {
 		let offset = h.rawOffset;
-		const outdoorTemp = weatherByHour.get(h.hour) ?? null;
+		const outdoorTemp = weatherByKey.get(h.key) ?? null;
 		const reasons: string[] = [];
 
 		// 50% guarantee: cheapest half always gets offset >= 0
-		if (cheapestHalfHours.has(h.hour) && offset < 0) {
+		if (cheapestHalfKeys.has(h.key) && offset < 0) {
 			offset = 0;
 			reasons.push('50% garantii');
 		}
@@ -178,6 +192,7 @@ export function calculatePriceProportionalOffsets(
 		const extras = reasons.length > 0 ? ` [${reasons.join(', ')}]` : '';
 
 		return {
+			date: h.date,
 			hour: h.hour,
 			planned_offset: finalOffset,
 			outdoor_temp_forecast: outdoorTemp,
@@ -186,17 +201,23 @@ export function calculatePriceProportionalOffsets(
 		};
 	});
 
-	// Sort by hour
-	return plannedHours.sort((a, b) => a.hour - b.hour);
+	// Sort by date then hour
+	return plannedHours.sort((a, b) => {
+		const dateCompare = (a.date || '').localeCompare(b.date || '');
+		if (dateCompare !== 0) return dateCompare;
+		return a.hour - b.hour;
+	});
 }
 
 /**
- * Calculate price-proportional DHW temperatures for a full day
+ * Calculate price-proportional DHW temperatures for all available hours
  *
  * Similar to heating, but:
  * - Uses absolute temperatures (30-55°C) instead of offsets
  * - Less price sensitive (K_DHW = 3 vs K = 7)
  * - Same 50% guarantee applies
+ *
+ * Supports multi-day planning by keying on date+hour
  */
 export function calculateDHWProportionalTemps(
 	prices: PriceData[],
@@ -212,21 +233,27 @@ export function calculateDHWProportionalTemps(
 	const midTemp = (minTemp + maxTemp) / 2; // 42.5°C
 	const tempRange = maxTemp - minTemp; // 25°C
 
-	// Aggregate prices by hour (in case we have sub-hourly data)
-	const hourlyPrices = new Map<number, number[]>();
+	// Aggregate prices by date+hour (in case we have sub-hourly data)
+	// Key: "YYYY-MM-DD-HH"
+	const hourlyPrices = new Map<string, { prices: number[], date: string, hour: number }>();
 	for (const p of prices) {
-		const hour = new Date(p.timestamp).getHours();
+		const d = new Date(p.timestamp);
+		const dateStr = d.toISOString().split('T')[0];
+		const hour = d.getHours();
+		const key = `${dateStr}-${hour.toString().padStart(2, '0')}`;
 		const priceCentKwh = eurMwhToCentKwh(p.price_eur_mwh);
-		if (!hourlyPrices.has(hour)) {
-			hourlyPrices.set(hour, []);
+		if (!hourlyPrices.has(key)) {
+			hourlyPrices.set(key, { prices: [], date: dateStr, hour });
 		}
-		hourlyPrices.get(hour)!.push(priceCentKwh);
+		hourlyPrices.get(key)!.prices.push(priceCentKwh);
 	}
 
-	// Calculate average price per hour
-	const pricesCentKwh = Array.from(hourlyPrices.entries()).map(([hour, prices]) => ({
-		hour,
-		price: prices.reduce((a, b) => a + b, 0) / prices.length
+	// Calculate average price per date+hour
+	const pricesCentKwh = Array.from(hourlyPrices.entries()).map(([key, data]) => ({
+		key,
+		date: data.date,
+		hour: data.hour,
+		price: data.prices.reduce((a, b) => a + b, 0) / data.prices.length
 	}));
 
 	// Calculate price statistics
@@ -250,6 +277,8 @@ export function calculateDHWProportionalTemps(
 		const rawTemp = midTemp + tempOffset;
 
 		return {
+			key: p.key,
+			date: p.date,
 			hour: p.hour,
 			price: p.price,
 			rawTemp
@@ -258,8 +287,8 @@ export function calculateDHWProportionalTemps(
 
 	// Sort by price to identify cheapest 50%
 	const sortedByPrice = [...rawTemps].sort((a, b) => a.price - b.price);
-	const cheapestHalfHours = new Set(
-		sortedByPrice.slice(0, Math.ceil(sortedByPrice.length / 2)).map(h => h.hour)
+	const cheapestHalfKeys = new Set(
+		sortedByPrice.slice(0, Math.ceil(sortedByPrice.length / 2)).map(h => h.key)
 	);
 
 	// Apply 50% guarantee
@@ -268,7 +297,7 @@ export function calculateDHWProportionalTemps(
 		const reasons: string[] = [];
 
 		// 50% guarantee: cheapest half always gets at least midTemp
-		if (cheapestHalfHours.has(h.hour) && temp < midTemp) {
+		if (cheapestHalfKeys.has(h.key) && temp < midTemp) {
 			temp = midTemp;
 			reasons.push('50% garantii');
 		}
@@ -287,6 +316,7 @@ export function calculateDHWProportionalTemps(
 		const extras = reasons.length > 0 ? ` [${reasons.join(', ')}]` : '';
 
 		return {
+			date: h.date,
 			hour: h.hour,
 			planned_temp: finalTemp,
 			price_cent_kwh: h.price,
@@ -294,13 +324,19 @@ export function calculateDHWProportionalTemps(
 		};
 	});
 
-	// Sort by hour
-	return plannedHours.sort((a, b) => a.hour - b.hour);
+	// Sort by date then hour
+	return plannedHours.sort((a, b) => {
+		const dateCompare = (a.date || '').localeCompare(b.date || '');
+		if (dateCompare !== 0) return dateCompare;
+		return a.hour - b.hour;
+	});
 }
 
 /**
- * Execute daily planning - called once per day around planning_hour (default 15:00)
- * Plans the heating and DHW schedule for the next day
+ * Execute daily planning - plans heating/DHW for all available hours
+ *
+ * Combines remaining hours today + all of tomorrow for optimal price spread.
+ * This way, expensive evening hours today won't get boost if tomorrow morning is cheap.
  */
 export async function executeDailyPlanning(
 	db: Database,
@@ -309,45 +345,81 @@ export async function executeDailyPlanning(
 	try {
 		const effectiveSettings = settings || await getSettings(db);
 
-		// Get tomorrow's date
-		const tomorrow = new Date();
+		// Get current time info
+		const now = new Date();
+		const currentHour = now.getHours();
+		const todayStr = now.toISOString().split('T')[0];
+		const tomorrow = new Date(now);
 		tomorrow.setDate(tomorrow.getDate() + 1);
 		const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-		// Get tomorrow's prices
+		// Get today's prices (will filter to remaining hours)
+		const todayPrices = await getTodayPrices(db);
+		const remainingTodayPrices = todayPrices.filter(p => {
+			const hour = new Date(p.timestamp).getHours();
+			return hour >= currentHour;
+		});
+
+		// Get tomorrow's prices (may not be available yet)
 		const tomorrowPrices = await getTomorrowPrices(db);
-		if (tomorrowPrices.length < 24) {
+
+		// Combine all available prices
+		const allPrices = [...remainingTodayPrices, ...tomorrowPrices];
+
+		// Need at least some data to plan
+		if (allPrices.length < 6) {
 			return {
 				success: false,
-				message: `Homse hinnad pole veel saadaval (${tomorrowPrices.length}/24 tundi)`,
-				date: tomorrowStr
+				message: `Pole piisavalt hinnaandmeid (${allPrices.length} tundi). Vaja vähemalt 6 tundi.`,
+				date: todayStr
 			};
 		}
 
-		// Get tomorrow's weather forecast
-		const tomorrowWeather = await getTomorrowWeather(
-			db,
-			effectiveSettings.weather_location_lat,
-			effectiveSettings.weather_location_lon
-		);
+		// Get weather for both days
+		const [todayWeather, tomorrowWeather] = await Promise.all([
+			getWeatherForDate(db, todayStr, effectiveSettings.weather_location_lat, effectiveSettings.weather_location_lon),
+			getWeatherForDate(db, tomorrowStr, effectiveSettings.weather_location_lat, effectiveSettings.weather_location_lon)
+		]);
+		const allWeather = [...todayWeather, ...tomorrowWeather];
 
-		// Calculate heating schedule
+		// Calculate heating schedule for ALL hours
 		const heatingHours = calculatePriceProportionalOffsets(
-			tomorrowPrices,
-			tomorrowWeather,
+			allPrices,
+			allWeather,
 			effectiveSettings
 		);
 
 		// Calculate DHW schedule if enabled
 		let dhwHours: PlannedDHWHour[] = [];
 		if (effectiveSettings.dhw_enabled) {
-			dhwHours = calculateDHWProportionalTemps(tomorrowPrices, effectiveSettings);
+			dhwHours = calculateDHWProportionalTemps(allPrices, effectiveSettings);
 		}
 
-		// Save schedules to database
-		await saveHeatingSchedule(db, tomorrowStr, heatingHours);
-		if (dhwHours.length > 0) {
-			await saveDHWSchedule(db, tomorrowStr, dhwHours);
+		// Group hours by date for saving
+		const heatingByDate = new Map<string, PlannedHeatingHour[]>();
+		for (const h of heatingHours) {
+			const date = h.date || todayStr;
+			if (!heatingByDate.has(date)) {
+				heatingByDate.set(date, []);
+			}
+			heatingByDate.get(date)!.push(h);
+		}
+
+		const dhwByDate = new Map<string, PlannedDHWHour[]>();
+		for (const h of dhwHours) {
+			const date = h.date || todayStr;
+			if (!dhwByDate.has(date)) {
+				dhwByDate.set(date, []);
+			}
+			dhwByDate.get(date)!.push(h);
+		}
+
+		// Save schedules to database (per date)
+		for (const [date, hours] of heatingByDate) {
+			await saveHeatingSchedule(db, date, hours);
+		}
+		for (const [date, hours] of dhwByDate) {
+			await saveDHWSchedule(db, date, hours);
 		}
 
 		// Clean up old schedules
@@ -355,18 +427,24 @@ export async function executeDailyPlanning(
 
 		// Build summary
 		const heatingOffsets = heatingHours.map(h => h.planned_offset);
-		const avgOffset = heatingOffsets.reduce((a, b) => a + b, 0) / heatingOffsets.length;
+		const avgOffset = heatingOffsets.length > 0
+			? heatingOffsets.reduce((a, b) => a + b, 0) / heatingOffsets.length
+			: 0;
 		const boostHours = heatingHours.filter(h => h.planned_offset >= 5).length;
 		const reduceHours = heatingHours.filter(h => h.planned_offset <= -5).length;
 
-		const message = `Plaan loodud: ${tomorrowStr}. ` +
+		// Count hours per day
+		const todayCount = heatingByDate.get(todayStr)?.length || 0;
+		const tomorrowCount = heatingByDate.get(tomorrowStr)?.length || 0;
+
+		const message = `Plaan loodud: täna ${todayCount}h + homme ${tomorrowCount}h. ` +
 			`Küte: keskmine nihe ${avgOffset.toFixed(1)}, boost ${boostHours}h, reduce ${reduceHours}h. ` +
 			(dhwHours.length > 0 ? `Boiler: ${dhwHours.length}h planeeritud.` : '');
 
 		return {
 			success: true,
 			message,
-			date: tomorrowStr,
+			date: `${todayStr}+${tomorrowStr}`,
 			heatingHours,
 			dhwHours
 		};
@@ -493,10 +571,21 @@ export async function executeScheduledTask(
 		const todayStr = now.toISOString().split('T')[0];
 
 		// Check if we should run daily planning
+		// Run if: it's the planning hour OR a previous planning attempt failed
 		let planningResult: DailyPlanningResult | undefined;
-		if (currentHour === settings.planning_hour) {
+		const shouldPlan = currentHour === settings.planning_hour || settings.planning_needs_retry;
+
+		if (shouldPlan) {
 			planningResult = await executeDailyPlanning(db, settings);
 			console.log('Daily planning result:', planningResult.message);
+
+			// Update retry flag based on success/failure
+			if (planningResult.success) {
+				await updateSetting(db, 'planning_needs_retry', 'false');
+			} else {
+				await updateSetting(db, 'planning_needs_retry', 'true');
+				console.log('Planning failed, will retry on next cron run');
+			}
 		}
 
 		// Get current price
@@ -785,93 +874,27 @@ export async function forceRunDailyPlanning(
 }
 
 /**
- * Plan for a specific date (used to backfill today's plan)
+ * Plan for available hours (wrapper for executeDailyPlanning)
+ *
+ * This function plans from the current hour onwards using all available price data.
+ * The dateStr parameter is kept for backwards compatibility but is ignored -
+ * planning always starts from now.
  */
 export async function planForDate(
 	db: Database,
-	dateStr: string
+	_dateStr?: string
 ): Promise<DailyPlanningResult> {
-	try {
-		const settings = await getSettings(db);
+	// Just use executeDailyPlanning which now handles multi-day planning
+	return executeDailyPlanning(db);
+}
 
-		// Get prices for the specified date
-		const startOfDay = new Date(dateStr);
-		startOfDay.setHours(0, 0, 0, 0);
-		const endOfDay = new Date(startOfDay);
-		endOfDay.setDate(endOfDay.getDate() + 1);
-
-		// Import getPricesForRange
-		const { getPricesForRange } = await import('./db');
-		let prices = await getPricesForRange(db, startOfDay.toISOString(), endOfDay.toISOString());
-
-		// If we don't have prices, try to fetch today's prices
-		if (prices.length < 24) {
-			const todayPrices = await getTodayPrices(db);
-			// Filter to the requested date
-			prices = todayPrices.filter(p => {
-				const pDate = new Date(p.timestamp).toISOString().split('T')[0];
-				return pDate === dateStr;
-			});
-		}
-
-		if (prices.length === 0) {
-			return {
-				success: false,
-				message: `Hinnad puuduvad kuupäeva ${dateStr} jaoks`,
-				date: dateStr
-			};
-		}
-
-		// Get weather forecast for the date
-		const weather = await getWeatherForDate(
-			db,
-			dateStr,
-			settings.weather_location_lat,
-			settings.weather_location_lon
-		);
-
-		// Calculate heating schedule
-		const heatingHours = calculatePriceProportionalOffsets(prices, weather, settings);
-
-		// Calculate DHW schedule if enabled
-		let dhwHours: PlannedDHWHour[] = [];
-		if (settings.dhw_enabled) {
-			dhwHours = calculateDHWProportionalTemps(prices, settings);
-		}
-
-		// Save schedules to database
-		await saveHeatingSchedule(db, dateStr, heatingHours);
-		if (dhwHours.length > 0) {
-			await saveDHWSchedule(db, dateStr, dhwHours);
-		}
-
-		// Build summary
-		const heatingOffsets = heatingHours.map(h => h.planned_offset);
-		const avgOffset = heatingOffsets.length > 0
-			? heatingOffsets.reduce((a, b) => a + b, 0) / heatingOffsets.length
-			: 0;
-		const boostHours = heatingHours.filter(h => h.planned_offset >= 5).length;
-		const reduceHours = heatingHours.filter(h => h.planned_offset <= -5).length;
-
-		const message = `Plaan loodud: ${dateStr}. ` +
-			`Küte: keskmine nihe ${avgOffset.toFixed(1)}, boost ${boostHours}h, reduce ${reduceHours}h. ` +
-			(dhwHours.length > 0 ? `Boiler: ${dhwHours.length}h planeeritud.` : '');
-
-		return {
-			success: true,
-			message,
-			date: dateStr,
-			heatingHours,
-			dhwHours
-		};
-	} catch (error) {
-		console.error('Plan for date error:', error);
-		return {
-			success: false,
-			message: error instanceof Error ? error.message : 'Unknown error',
-			date: dateStr
-		};
-	}
+/**
+ * Alias for planForDate - plans from current hour using all available data
+ */
+export async function planAvailableHours(
+	db: Database
+): Promise<DailyPlanningResult> {
+	return executeDailyPlanning(db);
 }
 
 /**

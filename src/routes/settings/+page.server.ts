@@ -106,16 +106,17 @@ export const actions: Actions = {
 		const db = createD1Wrapper(platform.env.DB);
 
 		try {
-			const today = new Date().toISOString().split('T')[0];
-			const result = await planForDate(db, today);
+			// planForDate now plans from current hour using all available data
+			const result = await planForDate(db);
 
 			if (!result.success) {
-				return fail(500, { message: result.error || 'Planning failed' });
+				return fail(500, { message: result.message || 'Planning failed' });
 			}
 
 			return {
 				recalculated: true,
-				hoursPlanned: result.heatingHours?.length ?? 0
+				hoursPlanned: result.heatingHours?.length ?? 0,
+				planningMessage: result.message
 			};
 		} catch (error) {
 			console.error('Recalculate error:', error);

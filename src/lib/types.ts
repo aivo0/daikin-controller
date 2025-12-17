@@ -121,6 +121,7 @@ export interface Settings {
 	planning_hour: number;             // Hour to run daily planning (default 15)
 	weather_location_lat: number;      // Latitude for weather forecast
 	weather_location_lon: number;      // Longitude for weather forecast
+	planning_needs_retry: boolean;     // Set to true if planning fails, retry on next cron
 }
 
 // Control action types
@@ -209,6 +210,7 @@ export interface PlannedHeatingHour {
 	outdoor_temp_forecast: number | null; // Forecasted outdoor temp
 	price_cent_kwh: number;               // Price for this hour
 	reason: string;                       // Human-readable explanation
+	date?: string;                        // YYYY-MM-DD (for multi-day planning)
 }
 
 // Planned DHW hour (for daily schedule)
@@ -217,6 +219,7 @@ export interface PlannedDHWHour {
 	planned_temp: number;      // 30-55
 	price_cent_kwh: number;    // Price for this hour
 	reason: string;            // Human-readable explanation
+	date?: string;             // YYYY-MM-DD (for multi-day planning)
 }
 
 // Daily heating schedule

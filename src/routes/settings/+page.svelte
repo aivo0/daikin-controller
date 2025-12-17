@@ -21,7 +21,7 @@
 
 {#if form?.recalculated}
 	<div class="alert alert-success mb-4">
-		<span>Tänane graafik ümberarvutatud! ({form.hoursPlanned} tundi)</span>
+		<span>Graafik ümberarvutatud! {form.planningMessage || `(${form.hoursPlanned} tundi)`}</span>
 	</div>
 {/if}
 

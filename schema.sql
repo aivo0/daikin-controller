@@ -189,4 +189,5 @@ INSERT OR IGNORE INTO settings (key, value) VALUES
   ('cold_weather_threshold', '-5'),     -- Below this temp, reduce expensive penalties
   ('planning_hour', '15'),              -- Hour to run daily planning (after prices available)
   ('weather_location_lat', '59.3'),     -- Latitude for Luige alevik
-  ('weather_location_lon', '24.7');
+  ('weather_location_lon', '24.7'),
+  ('planning_needs_retry', 'false');    -- Set to true if planning fails, retry on next cron

@@ -60,7 +60,8 @@ export async function getSettings(db: Database): Promise<Settings> {
 		cold_weather_threshold: parseFloat(settingsMap.get('cold_weather_threshold') || '-5'),
 		planning_hour: parseInt(settingsMap.get('planning_hour') || '15'),
 		weather_location_lat: parseFloat(settingsMap.get('weather_location_lat') || '59.3'),
-		weather_location_lon: parseFloat(settingsMap.get('weather_location_lon') || '24.7')
+		weather_location_lon: parseFloat(settingsMap.get('weather_location_lon') || '24.7'),
+		planning_needs_retry: settingsMap.get('planning_needs_retry') === 'true'
 	};
 }
 
