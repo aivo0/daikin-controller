@@ -567,13 +567,14 @@ export async function executeScheduledTask(
 	try {
 		const settings = await getSettings(db);
 		const now = new Date();
-		const currentHour = now.getHours();
+		const localHour = now.getHours();  // For user-facing planning_hour setting
+		const currentHour = now.getUTCHours();  // For schedule lookups (stored in UTC)
 		const todayStr = now.toISOString().split('T')[0];
 
-		// Check if we should run daily planning
+		// Check if we should run daily planning (using local time since planning_hour is user-set)
 		// Run if: it's the planning hour OR a previous planning attempt failed
 		let planningResult: DailyPlanningResult | undefined;
-		const shouldPlan = currentHour === settings.planning_hour || settings.planning_needs_retry;
+		const shouldPlan = localHour === settings.planning_hour || settings.planning_needs_retry;
 
 		if (shouldPlan) {
 			planningResult = await executeDailyPlanning(db, settings);
@@ -663,12 +664,7 @@ export async function executeScheduledTask(
 			const tomorrowPrices = await getTomorrowPrices(db);
 			const allPrices = [...todayPrices, ...tomorrowPrices];
 
-			const currentTimestamp = new Date(
-				now.getFullYear(),
-				now.getMonth(),
-				now.getDate(),
-				currentHour
-			).toISOString();
+			const currentTimestamp = `${todayStr}T${currentHour.toString().padStart(2, '0')}:00:00.000Z`;
 
 			decision = calculateFallbackHeatingAction(
 				currentPriceCentKwh,
@@ -817,7 +813,7 @@ export async function previewControlAction(
 	try {
 		const settings = await getSettings(db);
 		const now = new Date();
-		const currentHour = now.getHours();
+		const currentHour = now.getUTCHours();
 		const todayStr = now.toISOString().split('T')[0];
 
 		const currentPriceEurMwh = await getCurrentHourPrice(db);
@@ -845,12 +841,7 @@ export async function previewControlAction(
 		const tomorrowPrices = await getTomorrowPrices(db);
 		const allPrices = [...todayPrices, ...tomorrowPrices];
 
-		const currentTimestamp = new Date(
-			now.getFullYear(),
-			now.getMonth(),
-			now.getDate(),
-			currentHour
-		).toISOString();
+		const currentTimestamp = `${todayStr}T${currentHour.toString().padStart(2, '0')}:00:00.000Z`;
 
 		return calculateFallbackHeatingAction(
 			currentPriceCentKwh,
