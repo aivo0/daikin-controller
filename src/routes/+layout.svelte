@@ -3,31 +3,42 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { page } from '$app/stores';
 	import { authClient } from '$lib/auth-client';
+	import { t, locale, type Locale } from '$lib/i18n';
+	import { theme } from '$lib/theme';
+	import { onMount } from 'svelte';
 
 	let { children, data } = $props();
 
 	const navItems = [
-		{ href: '/', label: 'Töölaud', icon: '📊' },
-		{ href: '/consumption', label: 'Tarbimine', icon: '⚡' },
-		{ href: '/history', label: 'Ajalugu', icon: '📈' },
-		{ href: '/settings', label: 'Seaded', icon: '⚙️' }
+		{ href: '/', key: 'dashboard' as const, icon: '📊' },
+		{ href: '/consumption', key: 'consumption' as const, icon: '⚡' },
+		{ href: '/history', key: 'history' as const, icon: '📈' },
+		{ href: '/settings', key: 'settings' as const, icon: '⚙️' }
 	];
+
+	onMount(() => {
+		theme.init();
+	});
 
 	async function signOut() {
 		await authClient.signOut();
 		window.location.href = '/login';
 	}
+
+	function setLocale(newLocale: Locale) {
+		locale.set(newLocale);
+	}
 </script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<title>Soojuspumba Kamandaja</title>
+	<title>{$t.appName}</title>
 </svelte:head>
 
 <div class="min-h-screen bg-base-200">
 	<div class="navbar bg-base-100 shadow-lg">
 		<div class="flex-1">
-			<a href="/" class="btn btn-ghost text-xl">Soojuspumba Kamandaja</a>
+			<a href="/" class="btn btn-ghost text-xl">{$t.appName}</a>
 		</div>
 		<div class="flex-none">
 			{#if data.user}
@@ -38,11 +49,37 @@
 								href={item.href}
 								class:active={$page.url.pathname === item.href}
 							>
-								{item.icon} {item.label}
+								{item.icon} {$t.nav[item.key]}
 							</a>
 						</li>
 					{/each}
 				</ul>
+				<!-- Theme toggle -->
+				<button class="btn btn-ghost btn-sm" onclick={() => theme.toggle()} aria-label="Toggle theme">
+					{#if $theme === 'light'}
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+						</svg>
+					{:else}
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+						</svg>
+					{/if}
+				</button>
+				<!-- Language switcher -->
+				<div class="dropdown dropdown-end ml-2">
+					<div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-1">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+						</svg>
+						{$locale.toUpperCase()}
+					</div>
+					<ul tabindex="0" class="menu menu-sm dropdown-content bg-base-100 rounded-box z-50 mt-3 w-32 p-2 shadow">
+						<li><button onclick={() => setLocale('et')} class:active={$locale === 'et'}>Eesti</button></li>
+						<li><button onclick={() => setLocale('en')} class:active={$locale === 'en'}>English</button></li>
+					</ul>
+				</div>
+				<!-- User menu -->
 				<div class="dropdown dropdown-end ml-2">
 					<div tabindex="0" role="button" class="btn btn-ghost btn-circle avatar">
 						{#if data.user.image}
@@ -57,7 +94,7 @@
 					</div>
 					<ul tabindex="0" class="menu menu-sm dropdown-content bg-base-100 rounded-box z-50 mt-3 w-52 p-2 shadow">
 						<li class="menu-title"><span>{data.user.email}</span></li>
-						<li><button onclick={signOut}>Logi välja</button></li>
+						<li><button onclick={signOut}>{$t.nav.signOut}</button></li>
 					</ul>
 				</div>
 			{/if}

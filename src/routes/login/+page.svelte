@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { authClient } from '$lib/auth-client';
+	import { t } from '$lib/i18n';
 
 	let loading = $state(false);
 	let error = $state<string | null>(null);
@@ -13,7 +14,7 @@
 				callbackURL: '/'
 			});
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Sisselogimine ebaõnnestus';
+			error = e instanceof Error ? e.message : $t.common.error;
 			loading = false;
 		}
 	}
@@ -22,9 +23,9 @@
 <div class="min-h-[80vh] flex items-center justify-center">
 	<div class="card bg-base-100 shadow-xl w-full max-w-md">
 		<div class="card-body items-center text-center">
-			<h1 class="card-title text-2xl mb-2">Soojuspumba Kamandaja</h1>
+			<h1 class="card-title text-2xl mb-2">{$t.appName}</h1>
 			<p class="text-base-content/70 mb-6">
-				Logi sisse, et hallata oma soojuspumba seadeid
+				{$t.login.description}
 			</p>
 
 			{#if error}
@@ -60,15 +61,8 @@
 						/>
 					</svg>
 				{/if}
-				Logi sisse Google'iga
+				{$t.login.googleButton}
 			</button>
-
-			<div class="divider text-xs opacity-50">Privaatne kasutus</div>
-
-			<p class="text-xs text-base-content/50">
-				See rakendus on ainult isiklikuks kasutamiseks.
-				Sisselogimine on kohustuslik turvalisuse tagamiseks.
-			</p>
 		</div>
 	</div>
 </div>

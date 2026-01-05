@@ -1,10 +1,11 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import { t, dateLocale } from '$lib/i18n';
 
 	let { data }: { data: PageData } = $props();
 
 	function formatDate(timestamp: string): string {
-		return new Date(timestamp).toLocaleString('et-EE', {
+		return new Date(timestamp).toLocaleString($dateLocale, {
 			day: '2-digit',
 			month: '2-digit',
 			year: 'numeric',
@@ -22,6 +23,7 @@
 			case 'dhw_reduce':
 				return 'badge-error';
 			case 'normal':
+			case 'dhw_normal':
 				return 'badge-warning';
 			default:
 				return 'badge-ghost';
@@ -29,19 +31,12 @@
 	}
 
 	function translateAction(action: string): string {
-		const translations: Record<string, string> = {
-			boost: 'KÜTMINE',
-			normal: 'TAVALINE',
-			reduce: 'VÄHENDATUD',
-			none: 'PUUDUB',
-			dhw_boost: 'BOILER +',
-			dhw_reduce: 'BOILER −'
-		};
-		return translations[action] || action.toUpperCase();
+		const key = action as keyof typeof $t.actions;
+		return $t.actions[key] || action.toUpperCase();
 	}
 </script>
 
-<h1 class="text-2xl font-bold mb-6">Juhtimisajalugu</h1>
+<h1 class="text-2xl font-bold mb-6">{$t.history.title}</h1>
 
 {#if data.error}
 	<div class="alert alert-error mb-4">
@@ -52,17 +47,17 @@
 <div class="card bg-base-100 shadow-xl">
 	<div class="card-body">
 		{#if data.logs.length === 0}
-			<p class="text-center py-8 opacity-50">Juhtimistoiminguid pole veel salvestatud</p>
+			<p class="text-center py-8 opacity-50">{$t.history.noLogs}</p>
 		{:else}
 			<div class="overflow-x-auto">
 				<table class="table table-zebra">
 					<thead>
 						<tr>
-							<th>Aeg</th>
-							<th>Tegevus</th>
-							<th>Hind</th>
-							<th>Temperatuuri muutus</th>
-							<th>Põhjus</th>
+							<th>{$t.history.time}</th>
+							<th>{$t.history.action}</th>
+							<th>{$t.history.price}</th>
+							<th>{$t.history.tempChange}</th>
+							<th>{$t.history.reason}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -78,7 +73,7 @@
 								</td>
 								<td>
 									{#if log.price_eur_mwh !== null}
-										{(log.price_eur_mwh / 10).toFixed(2)} senti/kWh
+										{(log.price_eur_mwh / 10).toFixed(2)} {$t.dashboard.centPerKwh}
 									{:else}
 										--
 									{/if}
