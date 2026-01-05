@@ -131,7 +131,7 @@ export const actions: Actions = {
 
 		try {
 			// planForDate now plans from current hour using all available data
-			const result = await planForDate(db, userId);
+			const result = await planForDate(db, undefined, userId);
 
 			if (!result.success) {
 				return fail(500, { message: result.message || 'Planning failed' });

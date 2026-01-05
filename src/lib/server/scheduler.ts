@@ -346,8 +346,17 @@ export async function executeDailyPlanning(
 	settings?: Settings,
 	userId?: string
 ): Promise<DailyPlanningResult> {
+	// userId is required for saving schedules
+	if (!userId) {
+		return {
+			success: false,
+			message: 'userId is required for planning',
+			date: ''
+		};
+	}
+
 	try {
-		const effectiveSettings = settings || (userId ? await getUserSettings(db, userId) : await getSettings(db));
+		const effectiveSettings = settings || await getUserSettings(db, userId);
 
 		// Get current time info (use UTC since price timestamps are in UTC)
 		const now = new Date();

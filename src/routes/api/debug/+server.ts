@@ -71,6 +71,8 @@ export const POST: RequestHandler = async ({ platform, locals, request }) => {
 		throw error(401, 'Not authenticated');
 	}
 
+	const userId = locals.user.id;
+
 	if (!platform?.env?.DB) {
 		throw error(500, 'Database not configured');
 	}
@@ -83,7 +85,7 @@ export const POST: RequestHandler = async ({ platform, locals, request }) => {
 
 		if (action === 'planToday') {
 			const today = new Date().toISOString().split('T')[0];
-			const result = await planForDate(db, today);
+			const result = await planForDate(db, today, userId);
 			return json({
 				action: 'planToday',
 				result
@@ -91,7 +93,7 @@ export const POST: RequestHandler = async ({ platform, locals, request }) => {
 		}
 
 		if (action === 'planDate' && body.date) {
-			const result = await planForDate(db, body.date);
+			const result = await planForDate(db, body.date, userId);
 			return json({
 				action: 'planDate',
 				result
@@ -99,7 +101,7 @@ export const POST: RequestHandler = async ({ platform, locals, request }) => {
 		}
 
 		if (action === 'getSchedule') {
-			const schedule = await getTodaySchedule(db);
+			const schedule = await getTodaySchedule(db, userId);
 			return json({
 				action: 'getSchedule',
 				schedule

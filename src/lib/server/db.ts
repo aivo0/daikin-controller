@@ -623,52 +623,36 @@ export async function getMonthlyConsumption(
 
 /**
  * Save a daily heating schedule
+ * userId is required for multi-user support
  */
 export async function saveHeatingSchedule(
 	db: Database,
 	date: string,
 	hours: PlannedHeatingHour[],
-	userId?: string
+	userId: string
 ): Promise<void> {
+	if (!userId) {
+		throw new Error('userId is required for saving heating schedule');
+	}
 	for (const hour of hours) {
-		if (userId) {
-			await db.run(
-				`INSERT INTO heating_schedule (user_id, date, hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(user_id, date, hour) DO UPDATE SET
-           planned_offset = excluded.planned_offset,
-           outdoor_temp_forecast = excluded.outdoor_temp_forecast,
-           price_cent_kwh = excluded.price_cent_kwh,
-           reason = excluded.reason,
-           created_at = datetime('now'),
-           applied_at = NULL`,
-				userId,
-				date,
-				hour.hour,
-				hour.planned_offset,
-				hour.outdoor_temp_forecast,
-				hour.price_cent_kwh,
-				hour.reason
-			);
-		} else {
-			await db.run(
-				`INSERT INTO heating_schedule (date, hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(date, hour) DO UPDATE SET
-           planned_offset = excluded.planned_offset,
-           outdoor_temp_forecast = excluded.outdoor_temp_forecast,
-           price_cent_kwh = excluded.price_cent_kwh,
-           reason = excluded.reason,
-           created_at = datetime('now'),
-           applied_at = NULL`,
-				date,
-				hour.hour,
-				hour.planned_offset,
-				hour.outdoor_temp_forecast,
-				hour.price_cent_kwh,
-				hour.reason
-			);
-		}
+		await db.run(
+			`INSERT INTO heating_schedule (user_id, date, hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, date, hour) DO UPDATE SET
+         planned_offset = excluded.planned_offset,
+         outdoor_temp_forecast = excluded.outdoor_temp_forecast,
+         price_cent_kwh = excluded.price_cent_kwh,
+         reason = excluded.reason,
+         created_at = datetime('now'),
+         applied_at = NULL`,
+			userId,
+			date,
+			hour.hour,
+			hour.planned_offset,
+			hour.outdoor_temp_forecast,
+			hour.price_cent_kwh,
+			hour.reason
+		);
 	}
 }
 
@@ -767,48 +751,34 @@ export async function markHeatingScheduleApplied(
 
 /**
  * Save a daily DHW schedule
+ * userId is required for multi-user support
  */
 export async function saveDHWSchedule(
 	db: Database,
 	date: string,
 	hours: PlannedDHWHour[],
-	userId?: string
+	userId: string
 ): Promise<void> {
+	if (!userId) {
+		throw new Error('userId is required for saving DHW schedule');
+	}
 	for (const hour of hours) {
-		if (userId) {
-			await db.run(
-				`INSERT INTO dhw_schedule (user_id, date, hour, planned_temp, price_cent_kwh, reason)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(user_id, date, hour) DO UPDATE SET
-           planned_temp = excluded.planned_temp,
-           price_cent_kwh = excluded.price_cent_kwh,
-           reason = excluded.reason,
-           created_at = datetime('now'),
-           applied_at = NULL`,
-				userId,
-				date,
-				hour.hour,
-				hour.planned_temp,
-				hour.price_cent_kwh,
-				hour.reason
-			);
-		} else {
-			await db.run(
-				`INSERT INTO dhw_schedule (date, hour, planned_temp, price_cent_kwh, reason)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(date, hour) DO UPDATE SET
-           planned_temp = excluded.planned_temp,
-           price_cent_kwh = excluded.price_cent_kwh,
-           reason = excluded.reason,
-           created_at = datetime('now'),
-           applied_at = NULL`,
-				date,
-				hour.hour,
-				hour.planned_temp,
-				hour.price_cent_kwh,
-				hour.reason
-			);
-		}
+		await db.run(
+			`INSERT INTO dhw_schedule (user_id, date, hour, planned_temp, price_cent_kwh, reason)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, date, hour) DO UPDATE SET
+         planned_temp = excluded.planned_temp,
+         price_cent_kwh = excluded.price_cent_kwh,
+         reason = excluded.reason,
+         created_at = datetime('now'),
+         applied_at = NULL`,
+			userId,
+			date,
+			hour.hour,
+			hour.planned_temp,
+			hour.price_cent_kwh,
+			hour.reason
+		);
 	}
 }
 
