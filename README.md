@@ -1,38 +1,48 @@
-# sv
+# Smart Heating Controller
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+Reduce your heating costs by automatically running your Daikin heat pump during cheap electricity hours.
 
-## Creating a project
+**[Try it free at daikin-controller.pages.dev](https://daikin-controller.pages.dev/)**
 
-If you're seeing this, you've probably already done this step. Congrats!
+## What It Does
 
-```sh
-# create a new project in the current directory
-npx sv create
+This app connects to your Daikin heat pump and automatically adjusts the heating based on real-time electricity prices. It heats more during cheap hours and less during expensive hours, reducing your electricity bill without sacrificing comfort.
 
-# create a new project in my-app
-npx sv create my-app
-```
+The app uses Estonian electricity market prices from Elering and plans your heating schedule every day around 3 PM when tomorrow's prices become available.
 
-## Developing
+## Screenshots
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+**Dashboard** - See electricity prices, current heat pump status, and upcoming actions:
 
-```sh
-npm run dev
+![Dashboard](static/screenshot-dashboard.jpg)
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
+**History** - Track all automatic control actions with timestamps and reasons:
 
-## Building
+![History](static/screenshot-history.jpg)
 
-To create a production version of your app:
+## Features
 
-```sh
-npm run build
-```
+- **Smart scheduling** - Automatically heats during cheap electricity hours
+- **Price visualization** - See today's and tomorrow's electricity prices on a chart
+- **Energy tracking** - Monitor your heating consumption and estimated costs
+- **Hot water control** - Optimize your boiler heating too
+- **Weather-aware** - Adjusts heating based on outdoor temperature forecasts
+- **Multi-language** - Available in Estonian and English
+- **Dark mode** - Easy on the eyes
 
-You can preview the production build with `npm run preview`.
+## Getting Started
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+1. Go to [daikin-controller.pages.dev](https://daikin-controller.pages.dev/)
+2. Sign in with your Google account
+3. Connect your Daikin account (the app will guide you through the Daikin Onecta authorization)
+4. That's it! The default settings work well for most users
+
+## Requirements
+
+- **Daikin heat pump** with cloud connectivity (Daikin Onecta compatible)
+- **Google account** for sign-in
+- Currently works with **Estonian electricity prices** (Elering market data)
+
+## Feedback & Issues
+
+If you encounter any problems or have suggestions, please [open an issue on GitHub](https://github.com/aivo/daikin-controller/issues).
