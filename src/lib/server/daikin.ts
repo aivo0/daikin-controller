@@ -1,5 +1,5 @@
 import type { Database } from './db';
-import { getTokens, saveTokens } from './db';
+import { getTokens, saveTokens, getUserTokens, saveUserTokens } from './db';
 import type { DaikinTokens, DaikinDevice, DaikinManagementPoint, DeviceState, DHWState, ConsumptionData, ConsumptionBlock, WeeklyConsumption, MonthlyConsumption } from '$lib/types';
 
 const DAIKIN_AUTH_URL = 'https://idp.onecta.daikineurope.com/v1/oidc/authorize';
@@ -112,13 +112,18 @@ export async function refreshAccessToken(
 
 /**
  * Get valid access token, refreshing if necessary
+ * If userId is provided, uses user-scoped tokens; otherwise falls back to legacy single-user tokens
  */
 export async function getValidAccessToken(
 	db: Database,
 	clientId: string,
-	clientSecret: string
+	clientSecret: string,
+	userId?: string
 ): Promise<string | null> {
-	const tokens = await getTokens(db);
+	// Get tokens - user-scoped if userId provided, otherwise legacy
+	const tokens = userId
+		? await getUserTokens(db, userId)
+		: await getTokens(db);
 
 	if (!tokens) {
 		return null;
@@ -131,7 +136,12 @@ export async function getValidAccessToken(
 	if (expiresAt.getTime() - now.getTime() < 5 * 60 * 1000) {
 		try {
 			const newTokens = await refreshAccessToken(tokens.refresh_token, clientId, clientSecret);
-			await saveTokens(db, newTokens);
+			// Save tokens - user-scoped if userId provided, otherwise legacy
+			if (userId) {
+				await saveUserTokens(db, userId, newTokens);
+			} else {
+				await saveTokens(db, newTokens);
+			}
 			return newTokens.access_token;
 		} catch (error) {
 			console.error('Failed to refresh token:', error);
@@ -327,9 +337,12 @@ export function findClimateControlId(device: DaikinDevice): string | null {
 
 /**
  * Check if we're connected to Daikin (have valid tokens)
+ * If userId is provided, checks user-scoped tokens; otherwise falls back to legacy
  */
-export async function isConnected(db: Database): Promise<boolean> {
-	const tokens = await getTokens(db);
+export async function isConnected(db: Database, userId?: string): Promise<boolean> {
+	const tokens = userId
+		? await getUserTokens(db, userId)
+		: await getTokens(db);
 	return tokens !== null;
 }
 

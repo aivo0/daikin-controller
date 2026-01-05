@@ -1,5 +1,5 @@
 import type { PageServerLoad, Actions } from './$types';
-import { createD1Wrapper, getSettings, updateSetting } from '$lib/server/db';
+import { createD1Wrapper, getUserSettings, updateUserSetting } from '$lib/server/db';
 import { isConnected, getAuthorizationUrl } from '$lib/server/daikin';
 import { planForDate } from '$lib/server/scheduler';
 import { fail, redirect } from '@sveltejs/kit';
@@ -9,6 +9,8 @@ export const load: PageServerLoad = async ({ platform, url, locals }) => {
 	if (!locals.user) {
 		throw redirect(302, '/login');
 	}
+
+	const userId = locals.user.id;
 
 	if (!platform?.env?.DB) {
 		return {
@@ -22,7 +24,10 @@ export const load: PageServerLoad = async ({ platform, url, locals }) => {
 	const db = createD1Wrapper(platform.env.DB);
 
 	try {
-		const [settings, connected] = await Promise.all([getSettings(db), isConnected(db)]);
+		const [settings, connected] = await Promise.all([
+			getUserSettings(db, userId),
+			isConnected(db, userId)
+		]);
 
 		// Generate OAuth URL if not connected
 		let authUrl: string | null = null;
@@ -56,6 +61,8 @@ export const actions: Actions = {
 			return fail(401, { message: 'Not authenticated' });
 		}
 
+		const userId = locals.user.id;
+
 		if (!platform?.env?.DB) {
 			return fail(500, { message: 'Database not configured' });
 		}
@@ -71,19 +78,34 @@ export const actions: Actions = {
 				'planning_hour',
 				'low_price_threshold',
 				'dhw_min_temp',
-				'dhw_target_temp'
+				'dhw_target_temp',
+				'weather_location_lat',
+				'weather_location_lon'
 			];
 
 			for (const key of settingsToUpdate) {
 				const value = formData.get(key);
 				if (value !== null) {
-					await updateSetting(db, key, value.toString());
+					// Validate location coordinates
+					if (key === 'weather_location_lat') {
+						const lat = parseFloat(value.toString());
+						if (isNaN(lat) || lat < -90 || lat > 90) {
+							return fail(400, { message: 'Latitude must be between -90 and 90' });
+						}
+					}
+					if (key === 'weather_location_lon') {
+						const lon = parseFloat(value.toString());
+						if (isNaN(lon) || lon < -180 || lon > 180) {
+							return fail(400, { message: 'Longitude must be between -180 and 180' });
+						}
+					}
+					await updateUserSetting(db, userId, key, value.toString());
 				}
 			}
 
 			// Handle DHW enabled toggle
 			const dhwEnabled = formData.get('dhw_enabled') === 'on';
-			await updateSetting(db, 'dhw_enabled', dhwEnabled.toString());
+			await updateUserSetting(db, userId, 'dhw_enabled', dhwEnabled.toString());
 
 			return { success: true };
 		} catch (error) {
@@ -99,6 +121,8 @@ export const actions: Actions = {
 			return fail(401, { message: 'Not authenticated' });
 		}
 
+		const userId = locals.user.id;
+
 		if (!platform?.env?.DB) {
 			return fail(500, { message: 'Database not configured' });
 		}
@@ -107,7 +131,7 @@ export const actions: Actions = {
 
 		try {
 			// planForDate now plans from current hour using all available data
-			const result = await planForDate(db);
+			const result = await planForDate(db, userId);
 
 			if (!result.success) {
 				return fail(500, { message: result.message || 'Planning failed' });

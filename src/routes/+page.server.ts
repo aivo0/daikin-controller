@@ -1,5 +1,5 @@
 import type { PageServerLoad } from './$types';
-import { createD1Wrapper, getLatestDeviceState, getSettings, getHeatingScheduleForDate } from '$lib/server/db';
+import { createD1Wrapper, getLatestDeviceState, getUserSettings, getHeatingScheduleForDate } from '$lib/server/db';
 import { getHourlyPricesWithAnalysis, getCurrentHourPrice, eurMwhToCentKwh } from '$lib/server/elering';
 import { isConnected } from '$lib/server/daikin';
 import { previewControlAction } from '$lib/server/scheduler';
@@ -7,6 +7,7 @@ import type { PlannedHeatingHour } from '$lib/types';
 
 export const load: PageServerLoad = async ({ platform, locals }) => {
 	const isAuthenticated = !!locals.user;
+	const userId = locals.user?.id;
 
 	if (!platform?.env?.DB) {
 		return {
@@ -38,7 +39,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 		let nextAction = null;
 		let heatingSchedule: PlannedHeatingHour[] = [];
 
-		if (isAuthenticated) {
+		if (isAuthenticated && userId) {
 			// Get today and tomorrow dates
 			const now = new Date();
 			const todayStr = now.toISOString().split('T')[0];
@@ -47,12 +48,12 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 			const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
 			const [deviceStateResult, settingsResult, connectedResult, nextActionResult, todaySchedule, tomorrowSchedule] = await Promise.all([
-				getLatestDeviceState(db),
-				getSettings(db),
-				isConnected(db),
-				previewControlAction(db),
-				getHeatingScheduleForDate(db, todayStr),
-				getHeatingScheduleForDate(db, tomorrowStr)
+				getLatestDeviceState(db, userId),
+				getUserSettings(db, userId),
+				isConnected(db, userId),
+				previewControlAction(db, userId),
+				getHeatingScheduleForDate(db, todayStr, userId),
+				getHeatingScheduleForDate(db, tomorrowStr, userId)
 			]);
 
 			deviceState = deviceStateResult;

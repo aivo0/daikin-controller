@@ -1,7 +1,9 @@
 import type { Database } from './db';
 import {
 	getSettings,
+	getUserSettings,
 	updateSetting,
+	updateUserSetting,
 	logControlAction,
 	saveDeviceState,
 	saveHourlyConsumption,
@@ -11,7 +13,8 @@ import {
 	getPlannedDHWTempForHour,
 	markHeatingScheduleApplied,
 	markDHWScheduleApplied,
-	cleanupOldSchedules
+	cleanupOldSchedules,
+	getAllUsersWithTokens
 } from './db';
 import {
 	getTodayPrices,
@@ -340,10 +343,11 @@ export function calculateDHWProportionalTemps(
  */
 export async function executeDailyPlanning(
 	db: Database,
-	settings?: Settings
+	settings?: Settings,
+	userId?: string
 ): Promise<DailyPlanningResult> {
 	try {
-		const effectiveSettings = settings || await getSettings(db);
+		const effectiveSettings = settings || (userId ? await getUserSettings(db, userId) : await getSettings(db));
 
 		// Get current time info (use UTC since price timestamps are in UTC)
 		const now = new Date();
@@ -416,14 +420,14 @@ export async function executeDailyPlanning(
 
 		// Save schedules to database (per date)
 		for (const [date, hours] of heatingByDate) {
-			await saveHeatingSchedule(db, date, hours);
+			await saveHeatingSchedule(db, date, hours, userId);
 		}
 		for (const [date, hours] of dhwByDate) {
-			await saveDHWSchedule(db, date, hours);
+			await saveDHWSchedule(db, date, hours, userId);
 		}
 
 		// Clean up old schedules
-		await cleanupOldSchedules(db);
+		await cleanupOldSchedules(db, userId);
 
 		// Build summary
 		const heatingOffsets = heatingHours.map(h => h.planned_offset);
@@ -552,11 +556,13 @@ function calculateFallbackHeatingAction(
 
 /**
  * Execute the scheduled control task
+ * If userId is provided, uses user-scoped settings and tokens
  */
 export async function executeScheduledTask(
 	db: Database,
 	clientId: string,
-	clientSecret: string
+	clientSecret: string,
+	userId?: string
 ): Promise<{
 	success: boolean;
 	message: string;
@@ -565,7 +571,7 @@ export async function executeScheduledTask(
 	planningResult?: DailyPlanningResult;
 }> {
 	try {
-		const settings = await getSettings(db);
+		const settings = userId ? await getUserSettings(db, userId) : await getSettings(db);
 		const now = new Date();
 		const localHour = now.getHours();  // For user-facing planning_hour setting
 		const currentHour = now.getUTCHours();  // For schedule lookups (stored in UTC)
@@ -577,14 +583,22 @@ export async function executeScheduledTask(
 		const shouldPlan = localHour === settings.planning_hour || settings.planning_needs_retry;
 
 		if (shouldPlan) {
-			planningResult = await executeDailyPlanning(db, settings);
+			planningResult = await executeDailyPlanning(db, settings, userId);
 			console.log('Daily planning result:', planningResult.message);
 
 			// Update retry flag based on success/failure
 			if (planningResult.success) {
-				await updateSetting(db, 'planning_needs_retry', 'false');
+				if (userId) {
+					await updateUserSetting(db, userId, 'planning_needs_retry', 'false');
+				} else {
+					await updateSetting(db, 'planning_needs_retry', 'false');
+				}
 			} else {
-				await updateSetting(db, 'planning_needs_retry', 'true');
+				if (userId) {
+					await updateUserSetting(db, userId, 'planning_needs_retry', 'true');
+				} else {
+					await updateSetting(db, 'planning_needs_retry', 'true');
+				}
 				console.log('Planning failed, will retry on next cron run');
 			}
 		}
@@ -601,8 +615,8 @@ export async function executeScheduledTask(
 
 		const currentPriceCentKwh = eurMwhToCentKwh(currentPriceEurMwh);
 
-		// Get access token
-		const accessToken = await getValidAccessToken(db, clientId, clientSecret);
+		// Get access token (user-scoped if userId provided)
+		const accessToken = await getValidAccessToken(db, clientId, clientSecret, userId);
 		if (!accessToken) {
 			return {
 				success: false,
@@ -644,7 +658,7 @@ export async function executeScheduledTask(
 
 		// Try to get planned offset for current hour
 		let decision: ControlDecision;
-		const plannedOffset = await getPlannedOffsetForHour(db, todayStr, currentHour);
+		const plannedOffset = await getPlannedOffsetForHour(db, todayStr, currentHour, userId);
 
 		if (plannedOffset !== null) {
 			// Use pre-planned schedule
@@ -657,7 +671,7 @@ export async function executeScheduledTask(
 			};
 
 			// Mark as applied
-			await markHeatingScheduleApplied(db, todayStr, currentHour);
+			await markHeatingScheduleApplied(db, todayStr, currentHour, userId);
 		} else {
 			// Fallback: no schedule exists, use legacy algorithm
 			const todayPrices = await getTodayPrices(db);
@@ -678,7 +692,7 @@ export async function executeScheduledTask(
 		// Handle DHW
 		let dhwDecision: DHWControlDecision | null = null;
 		if (settings.dhw_enabled && dhwControlId) {
-			const plannedDhwTemp = await getPlannedDHWTempForHour(db, todayStr, currentHour);
+			const plannedDhwTemp = await getPlannedDHWTempForHour(db, todayStr, currentHour, userId);
 
 			if (plannedDhwTemp !== null) {
 				const action: ControlAction = plannedDhwTemp >= 50 ? 'boost' : plannedDhwTemp <= 35 ? 'reduce' : 'normal';
@@ -688,7 +702,7 @@ export async function executeScheduledTask(
 					targetTemperature: plannedDhwTemp,
 					currentPrice: currentPriceCentKwh
 				};
-				await markDHWScheduleApplied(db, todayStr, currentHour);
+				await markDHWScheduleApplied(db, todayStr, currentHour, userId);
 			} else {
 				// Fallback DHW logic
 				const tankTemp = dhwState?.tank_temp ?? null;
@@ -733,8 +747,8 @@ export async function executeScheduledTask(
 			cooling_kwh: consumptionData.cooling_today_kwh,
 			dhw_kwh: consumptionData.dhw_today_kwh
 		};
-		await saveDeviceState(db, stateToSave);
-		await saveHourlyConsumption(db, consumptionData);
+		await saveDeviceState(db, stateToSave, userId);
+		await saveHourlyConsumption(db, consumptionData, userId);
 
 		const messages: string[] = [];
 
@@ -755,7 +769,7 @@ export async function executeScheduledTask(
 				price_eur_mwh: currentPriceEurMwh,
 				old_target_temp: deviceState.target_offset,
 				new_target_temp: decision.targetTemperature
-			});
+			}, userId);
 
 			messages.push(`Küte: nihe ${deviceState.target_offset} -> ${decision.targetTemperature} (${decision.action})`);
 		} else {
@@ -780,7 +794,7 @@ export async function executeScheduledTask(
 					price_eur_mwh: currentPriceEurMwh,
 					old_target_temp: currentDhwTarget,
 					new_target_temp: dhwDecision.targetTemperature
-				});
+				}, userId);
 
 				messages.push(`Boiler: siht ${currentDhwTarget}°C -> ${dhwDecision.targetTemperature}°C (${dhwDecision.action})`);
 			} else {
@@ -808,10 +822,11 @@ export async function executeScheduledTask(
  * Preview what action would be taken without executing
  */
 export async function previewControlAction(
-	db: Database
+	db: Database,
+	userId?: string
 ): Promise<ControlDecision | null> {
 	try {
-		const settings = await getSettings(db);
+		const settings = userId ? await getUserSettings(db, userId) : await getSettings(db);
 		const now = new Date();
 		const currentHour = now.getUTCHours();
 		const todayStr = now.toISOString().split('T')[0];
@@ -824,7 +839,7 @@ export async function previewControlAction(
 		const currentPriceCentKwh = eurMwhToCentKwh(currentPriceEurMwh);
 
 		// Try to get planned offset
-		const plannedOffset = await getPlannedOffsetForHour(db, todayStr, currentHour);
+		const plannedOffset = await getPlannedOffsetForHour(db, todayStr, currentHour, userId);
 
 		if (plannedOffset !== null) {
 			const action: ControlAction = plannedOffset >= 5 ? 'boost' : plannedOffset <= -5 ? 'reduce' : 'normal';
@@ -859,9 +874,10 @@ export async function previewControlAction(
  * Force run daily planning (for manual trigger or testing)
  */
 export async function forceRunDailyPlanning(
-	db: Database
+	db: Database,
+	userId?: string
 ): Promise<DailyPlanningResult> {
-	return executeDailyPlanning(db);
+	return executeDailyPlanning(db, undefined, userId);
 }
 
 /**
@@ -873,37 +889,95 @@ export async function forceRunDailyPlanning(
  */
 export async function planForDate(
 	db: Database,
-	_dateStr?: string
+	_dateStr?: string,
+	userId?: string
 ): Promise<DailyPlanningResult> {
 	// Just use executeDailyPlanning which now handles multi-day planning
-	return executeDailyPlanning(db);
+	return executeDailyPlanning(db, undefined, userId);
 }
 
 /**
  * Alias for planForDate - plans from current hour using all available data
  */
 export async function planAvailableHours(
-	db: Database
+	db: Database,
+	userId?: string
 ): Promise<DailyPlanningResult> {
-	return executeDailyPlanning(db);
+	return executeDailyPlanning(db, undefined, userId);
 }
 
 /**
  * Get the current day's schedule for display
  */
 export async function getTodaySchedule(
-	db: Database
+	db: Database,
+	userId?: string
 ): Promise<{ heating: PlannedHeatingHour[]; dhw: PlannedDHWHour[] } | null> {
 	const todayStr = new Date().toISOString().split('T')[0];
 
 	const { getHeatingScheduleForDate, getDHWScheduleForDate } = await import('./db');
 
-	const heating = await getHeatingScheduleForDate(db, todayStr);
-	const dhw = await getDHWScheduleForDate(db, todayStr);
+	const heating = await getHeatingScheduleForDate(db, todayStr, userId);
+	const dhw = await getDHWScheduleForDate(db, todayStr, userId);
 
 	if (heating.length === 0 && dhw.length === 0) {
 		return null;
 	}
 
 	return { heating, dhw };
+}
+
+// Multi-user scheduler result types
+export interface UserSchedulerResult {
+	userId: string;
+	success: boolean;
+	message: string;
+	decision?: ControlDecision;
+}
+
+export interface MultiUserSchedulerResult {
+	success: boolean;
+	usersProcessed: number;
+	results: UserSchedulerResult[];
+}
+
+/**
+ * Execute scheduled task for ALL users with valid tokens
+ * Used by the cron job to process all users
+ */
+export async function executeScheduledTaskForAllUsers(
+	db: Database,
+	clientId: string,
+	clientSecret: string
+): Promise<MultiUserSchedulerResult> {
+	const usersWithTokens = await getAllUsersWithTokens(db);
+	const results: UserSchedulerResult[] = [];
+
+	console.log(`Running scheduler for ${usersWithTokens.length} user(s)`);
+
+	for (const { userId } of usersWithTokens) {
+		try {
+			console.log(`Processing user: ${userId}`);
+			const result = await executeScheduledTask(db, clientId, clientSecret, userId);
+			results.push({
+				userId,
+				success: result.success,
+				message: result.message,
+				decision: result.decision
+			});
+		} catch (error) {
+			console.error(`Scheduler error for user ${userId}:`, error);
+			results.push({
+				userId,
+				success: false,
+				message: error instanceof Error ? error.message : 'Unknown error'
+			});
+		}
+	}
+
+	return {
+		success: results.every(r => r.success),
+		usersProcessed: results.length,
+		results
+	};
 }

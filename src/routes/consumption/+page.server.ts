@@ -19,6 +19,8 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 		throw redirect(302, '/login');
 	}
 
+	const userId = locals.user.id;
+
 	if (!platform?.env?.DB) {
 		return {
 			error: 'Database not configured',
@@ -49,9 +51,10 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 			FROM device_state
 			WHERE timestamp >= datetime('now', '-30 days')
 				AND (heating_kwh IS NOT NULL OR cooling_kwh IS NOT NULL OR dhw_kwh IS NOT NULL)
+				AND user_id = ?
 			GROUP BY date(timestamp)
 			ORDER BY date DESC
-		`);
+		`, userId);
 
 		const dailyData: DailyConsumption[] = rows.map(row => {
 			const heating = row.heating_kwh ?? 0;
@@ -74,7 +77,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 		});
 
 		// Get hourly consumption data (last 7 days)
-		const hourlyData: HourlyConsumption[] = await getHourlyConsumption(db, 7);
+		const hourlyData: HourlyConsumption[] = await getHourlyConsumption(db, 7, userId);
 
 		// Calculate summary for the period
 		const summary = {

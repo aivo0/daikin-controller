@@ -1,10 +1,11 @@
 import type { RequestHandler } from './$types';
 import { json, error } from '@sveltejs/kit';
 import { createD1Wrapper } from '$lib/server/db';
-import { executeScheduledTask } from '$lib/server/scheduler';
+import { executeScheduledTaskForAllUsers } from '$lib/server/scheduler';
 
 // This endpoint is called by Cloudflare Cron Triggers every 15 minutes
 // You can also call it manually for testing
+// Now processes ALL users with valid Daikin tokens
 
 export const GET: RequestHandler = async ({ platform, request }) => {
 	// Check for cron secret or internal call
@@ -34,7 +35,8 @@ export const GET: RequestHandler = async ({ platform, request }) => {
 	const db = createD1Wrapper(platform.env.DB);
 
 	try {
-		const result = await executeScheduledTask(db, clientId, clientSecret);
+		// Process all users with valid tokens
+		const result = await executeScheduledTaskForAllUsers(db, clientId, clientSecret);
 
 		return json({
 			...result,

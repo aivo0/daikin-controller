@@ -1,9 +1,10 @@
 import type { RequestHandler } from './$types';
 import { redirect, error } from '@sveltejs/kit';
-import { createD1Wrapper, saveTokens } from '$lib/server/db';
+import { createD1Wrapper, saveUserTokens } from '$lib/server/db';
 import { exchangeCodeForTokens } from '$lib/server/daikin';
+import { createAuth } from '$lib/server/auth';
 
-export const GET: RequestHandler = async ({ url, platform }) => {
+export const GET: RequestHandler = async ({ url, platform, request }) => {
 	const code = url.searchParams.get('code');
 	const errorParam = url.searchParams.get('error');
 	const errorDescription = url.searchParams.get('error_description');
@@ -20,6 +21,16 @@ export const GET: RequestHandler = async ({ url, platform }) => {
 		throw error(500, 'Database not configured');
 	}
 
+	// Get current user from session
+	const auth = createAuth(platform.env);
+	const session = await auth.api.getSession({ headers: request.headers });
+
+	if (!session?.user?.id) {
+		throw error(401, 'Must be logged in to connect Daikin account');
+	}
+
+	const userId = session.user.id;
+
 	const clientId = platform.env.DAIKIN_CLIENT_ID;
 	const clientSecret = platform.env.DAIKIN_CLIENT_SECRET;
 
@@ -30,13 +41,14 @@ export const GET: RequestHandler = async ({ url, platform }) => {
 	const redirectUri = `${url.origin}/auth/callback`;
 
 	try {
-		console.log('OAuth callback received, exchanging code...');
+		console.log('OAuth callback received, exchanging code for user:', userId);
 		console.log('Redirect URI:', redirectUri);
 
 		const tokens = await exchangeCodeForTokens(code, clientId, clientSecret, redirectUri);
 
 		const db = createD1Wrapper(platform.env.DB);
-		await saveTokens(db, tokens);
+		// Save tokens associated with the current user
+		await saveUserTokens(db, userId, tokens);
 
 		return new Response(null, {
 			status: 303,

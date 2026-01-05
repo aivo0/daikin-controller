@@ -74,6 +74,94 @@ export async function updateSetting(db: Database, key: string, value: string): P
 	);
 }
 
+// User-scoped settings helpers
+const USER_SPECIFIC_SETTINGS = [
+	'price_sensitivity',
+	'cold_weather_threshold',
+	'planning_hour',
+	'low_price_threshold',
+	'dhw_min_temp',
+	'dhw_target_temp',
+	'weather_location_lat',
+	'weather_location_lon',
+	'planning_needs_retry'
+];
+
+export async function getUserSettings(db: Database, userId: string): Promise<Settings> {
+	// Get global defaults first
+	const globalRows = await db.all<{ key: string; value: string }>('SELECT key, value FROM settings');
+	const settingsMap = new Map(globalRows.map((r) => [r.key, r.value]));
+
+	// Override with user-specific settings
+	const userRows = await db.all<{ key: string; value: string }>(
+		'SELECT key, value FROM user_settings WHERE user_id = ?',
+		userId
+	);
+	for (const row of userRows) {
+		settingsMap.set(row.key, row.value);
+	}
+
+	return {
+		min_temperature: parseFloat(settingsMap.get('min_temperature') || '20'),
+		base_temperature: parseFloat(settingsMap.get('base_temperature') || '22'),
+		boost_delta: parseFloat(settingsMap.get('boost_delta') || '2'),
+		reduce_delta: parseFloat(settingsMap.get('reduce_delta') || '2'),
+		low_price_threshold: parseFloat(settingsMap.get('low_price_threshold') || '5'),
+		high_price_threshold: parseFloat(settingsMap.get('high_price_threshold') || '15'),
+		cheapest_hours: parseInt(settingsMap.get('cheapest_hours') || '4'),
+		peak_hours_to_avoid: parseInt(settingsMap.get('peak_hours_to_avoid') || '3'),
+		strategies_enabled: JSON.parse(
+			settingsMap.get('strategies_enabled') ||
+				'{"threshold":true,"cheapest":true,"peaks":true}'
+		),
+		min_water_temp: parseFloat(settingsMap.get('min_water_temp') || '20'),
+		target_water_temp: parseFloat(settingsMap.get('target_water_temp') || '32'),
+		best_price_window_hours: parseInt(settingsMap.get('best_price_window_hours') || '6'),
+		dhw_enabled: settingsMap.get('dhw_enabled') === 'true',
+		dhw_min_temp: parseFloat(settingsMap.get('dhw_min_temp') || '30'),
+		dhw_target_temp: parseFloat(settingsMap.get('dhw_target_temp') || '60'),
+		price_sensitivity: parseFloat(settingsMap.get('price_sensitivity') || '7'),
+		cold_weather_threshold: parseFloat(settingsMap.get('cold_weather_threshold') || '-5'),
+		planning_hour: parseInt(settingsMap.get('planning_hour') || '15'),
+		weather_location_lat: parseFloat(settingsMap.get('weather_location_lat') || '59.3'),
+		weather_location_lon: parseFloat(settingsMap.get('weather_location_lon') || '24.7'),
+		planning_needs_retry: settingsMap.get('planning_needs_retry') === 'true'
+	};
+}
+
+export async function updateUserSetting(db: Database, userId: string, key: string, value: string): Promise<void> {
+	// User-specific settings go to user_settings table
+	if (USER_SPECIFIC_SETTINGS.includes(key)) {
+		await db.run(
+			`INSERT INTO user_settings (user_id, key, value, updated_at) VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+			userId,
+			key,
+			value
+		);
+	} else {
+		// Global settings go to settings table
+		await updateSetting(db, key, value);
+	}
+}
+
+export async function initializeUserSettings(db: Database, userId: string): Promise<void> {
+	// Initialize user with default settings from global settings
+	const globalRows = await db.all<{ key: string; value: string }>(
+		`SELECT key, value FROM settings WHERE key IN (${USER_SPECIFIC_SETTINGS.map(() => '?').join(',')})`,
+		...USER_SPECIFIC_SETTINGS
+	);
+
+	for (const row of globalRows) {
+		await db.run(
+			`INSERT OR IGNORE INTO user_settings (user_id, key, value, updated_at) VALUES (?, ?, ?, datetime('now'))`,
+			userId,
+			row.key,
+			row.value
+		);
+	}
+}
+
 // Price helpers
 export async function savePrices(db: Database, prices: PriceData[]): Promise<void> {
 	for (const price of prices) {
@@ -107,15 +195,17 @@ export async function getCurrentPrice(db: Database): Promise<PriceData | null> {
 	);
 }
 
-// Device state helpers
+// Device state helpers (user-scoped)
 export async function saveDeviceState(
 	db: Database,
-	state: DeviceState
+	state: DeviceState,
+	userId?: string
 ): Promise<void> {
 	// Use both old and new column names for compatibility
 	await db.run(
-		`INSERT INTO device_state (timestamp, device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, price_cent_kwh, action_taken, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO device_state (user_id, timestamp, device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, price_cent_kwh, action_taken, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userId || null,
 		state.timestamp || new Date().toISOString(),
 		state.device_id,
 		state.water_temp, // old column
@@ -136,25 +226,47 @@ export async function saveDeviceState(
 	);
 }
 
-export async function getLatestDeviceState(db: Database): Promise<DeviceState | null> {
+export async function getLatestDeviceState(db: Database, userId?: string): Promise<DeviceState | null> {
 	// Support both old and new column names
-	const row = await db.get<{
-		device_id: string;
-		room_temp: number | null;
-		target_temp: number | null;
-		water_temp: number | null;
-		outdoor_temp: number | null;
-		target_offset: number | null;
-		mode: string | null;
-		power_on: number;
-		timestamp: string;
-		dhw_tank_temp: number | null;
-		dhw_target_temp: number | null;
-		dhw_action: string | null;
-		heating_kwh: number | null;
-		cooling_kwh: number | null;
-		dhw_kwh: number | null;
-	}>('SELECT device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh FROM device_state ORDER BY timestamp DESC LIMIT 1');
+	const query = userId
+		? 'SELECT device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh FROM device_state WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1'
+		: 'SELECT device_id, room_temp, target_temp, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh FROM device_state ORDER BY timestamp DESC LIMIT 1';
+
+	const row = await (userId
+		? db.get<{
+			device_id: string;
+			room_temp: number | null;
+			target_temp: number | null;
+			water_temp: number | null;
+			outdoor_temp: number | null;
+			target_offset: number | null;
+			mode: string | null;
+			power_on: number;
+			timestamp: string;
+			dhw_tank_temp: number | null;
+			dhw_target_temp: number | null;
+			dhw_action: string | null;
+			heating_kwh: number | null;
+			cooling_kwh: number | null;
+			dhw_kwh: number | null;
+		}>(query, userId)
+		: db.get<{
+			device_id: string;
+			room_temp: number | null;
+			target_temp: number | null;
+			water_temp: number | null;
+			outdoor_temp: number | null;
+			target_offset: number | null;
+			mode: string | null;
+			power_on: number;
+			timestamp: string;
+			dhw_tank_temp: number | null;
+			dhw_target_temp: number | null;
+			dhw_action: string | null;
+			heating_kwh: number | null;
+			cooling_kwh: number | null;
+			dhw_kwh: number | null;
+		}>(query));
 
 	if (!row) return null;
 
@@ -175,25 +287,44 @@ export async function getLatestDeviceState(db: Database): Promise<DeviceState | 
 	};
 }
 
-export async function getDeviceStateHistory(db: Database, hours: number = 24): Promise<DeviceState[]> {
+export async function getDeviceStateHistory(db: Database, hours: number = 24, userId?: string): Promise<DeviceState[]> {
 	const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-	const rows = await db.all<{
-		device_id: string;
-		water_temp: number | null;
-		outdoor_temp: number | null;
-		target_offset: number | null;
-		mode: string | null;
-		power_on: number;
-		timestamp: string;
-		price_cent_kwh: number | null;
-		action_taken: string | null;
-		dhw_tank_temp: number | null;
-		dhw_target_temp: number | null;
-		dhw_action: string | null;
-		heating_kwh: number | null;
-		cooling_kwh: number | null;
-		dhw_kwh: number | null;
-	}>('SELECT * FROM device_state WHERE timestamp >= ? ORDER BY timestamp', since);
+
+	const rows = userId
+		? await db.all<{
+			device_id: string;
+			water_temp: number | null;
+			outdoor_temp: number | null;
+			target_offset: number | null;
+			mode: string | null;
+			power_on: number;
+			timestamp: string;
+			price_cent_kwh: number | null;
+			action_taken: string | null;
+			dhw_tank_temp: number | null;
+			dhw_target_temp: number | null;
+			dhw_action: string | null;
+			heating_kwh: number | null;
+			cooling_kwh: number | null;
+			dhw_kwh: number | null;
+		}>('SELECT device_id, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp, price_cent_kwh, action_taken, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh FROM device_state WHERE user_id = ? AND timestamp >= ? ORDER BY timestamp', userId, since)
+		: await db.all<{
+			device_id: string;
+			water_temp: number | null;
+			outdoor_temp: number | null;
+			target_offset: number | null;
+			mode: string | null;
+			power_on: number;
+			timestamp: string;
+			price_cent_kwh: number | null;
+			action_taken: string | null;
+			dhw_tank_temp: number | null;
+			dhw_target_temp: number | null;
+			dhw_action: string | null;
+			heating_kwh: number | null;
+			cooling_kwh: number | null;
+			dhw_kwh: number | null;
+		}>('SELECT device_id, water_temp, outdoor_temp, target_offset, mode, power_on, timestamp, price_cent_kwh, action_taken, dhw_tank_temp, dhw_target_temp, dhw_action, heating_kwh, cooling_kwh, dhw_kwh FROM device_state WHERE timestamp >= ? ORDER BY timestamp', since);
 
 	return rows.map(row => ({
 		device_id: row.device_id,
@@ -214,7 +345,7 @@ export async function getDeviceStateHistory(db: Database, hours: number = 24): P
 	}));
 }
 
-// Token helpers
+// Token helpers (legacy single-user - kept for migration)
 export async function getTokens(db: Database): Promise<DaikinTokens | null> {
 	return db.get<DaikinTokens>(
 		'SELECT access_token, refresh_token, expires_at FROM tokens WHERE id = 1'
@@ -236,14 +367,63 @@ export async function saveTokens(db: Database, tokens: DaikinTokens): Promise<vo
 	);
 }
 
-// Control log helpers
+// User-scoped token helpers
+export async function getUserTokens(db: Database, userId: string): Promise<DaikinTokens | null> {
+	return db.get<DaikinTokens>(
+		'SELECT access_token, refresh_token, expires_at FROM user_tokens WHERE user_id = ?',
+		userId
+	);
+}
+
+export async function saveUserTokens(db: Database, userId: string, tokens: DaikinTokens): Promise<void> {
+	await db.run(
+		`INSERT INTO user_tokens (user_id, access_token, refresh_token, expires_at, updated_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET
+       access_token = excluded.access_token,
+       refresh_token = excluded.refresh_token,
+       expires_at = excluded.expires_at,
+       updated_at = excluded.updated_at`,
+		userId,
+		tokens.access_token,
+		tokens.refresh_token,
+		tokens.expires_at
+	);
+}
+
+export async function deleteUserTokens(db: Database, userId: string): Promise<void> {
+	await db.run('DELETE FROM user_tokens WHERE user_id = ?', userId);
+}
+
+// Get all users with valid Daikin tokens (for multi-user scheduler)
+export async function getAllUsersWithTokens(db: Database): Promise<Array<{ userId: string; tokens: DaikinTokens }>> {
+	const rows = await db.all<{
+		user_id: string;
+		access_token: string;
+		refresh_token: string;
+		expires_at: string;
+	}>('SELECT user_id, access_token, refresh_token, expires_at FROM user_tokens');
+
+	return rows.map(row => ({
+		userId: row.user_id,
+		tokens: {
+			access_token: row.access_token,
+			refresh_token: row.refresh_token,
+			expires_at: row.expires_at
+		}
+	}));
+}
+
+// Control log helpers (user-scoped)
 export async function logControlAction(
 	db: Database,
-	entry: Omit<ControlLogEntry, 'id'>
+	entry: Omit<ControlLogEntry, 'id'>,
+	userId?: string
 ): Promise<void> {
 	await db.run(
-		`INSERT INTO control_log (timestamp, action, reason, price_eur_mwh, old_target_temp, new_target_temp)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO control_log (user_id, timestamp, action, reason, price_eur_mwh, old_target_temp, new_target_temp)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		userId || null,
 		entry.timestamp,
 		entry.action,
 		entry.reason,
@@ -255,20 +435,29 @@ export async function logControlAction(
 
 export async function getRecentControlLogs(
 	db: Database,
-	limit: number = 50
+	limit: number = 50,
+	userId?: string
 ): Promise<ControlLogEntry[]> {
+	if (userId) {
+		return db.all<ControlLogEntry>(
+			'SELECT id, timestamp, action, reason, price_eur_mwh, old_target_temp, new_target_temp FROM control_log WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
+			userId,
+			limit
+		);
+	}
 	return db.all<ControlLogEntry>(
 		'SELECT id, timestamp, action, reason, price_eur_mwh, old_target_temp, new_target_temp FROM control_log ORDER BY timestamp DESC LIMIT ?',
 		limit
 	);
 }
 
-// Energy consumption helpers
+// Energy consumption helpers (user-scoped)
 // Note: Daikin API returns null for timeslots where data is not yet available.
 // We must NOT overwrite existing values with null - only update when we have actual data.
 export async function saveHourlyConsumption(
 	db: Database,
-	consumption: ConsumptionData
+	consumption: ConsumptionData,
+	userId?: string
 ): Promise<void> {
 	// Save each 2-hour block from the consumption data
 	for (const block of consumption.blocks) {
@@ -289,42 +478,86 @@ export async function saveHourlyConsumption(
 
 	// Save weekly consumption data
 	for (const week of consumption.weekly) {
-		await db.run(
-			`INSERT INTO weekly_consumption (week_start, heating_kwh, cooling_kwh, dhw_kwh)
-			 VALUES (?, ?, ?, ?)
-			 ON CONFLICT(week_start) DO UPDATE SET
-			   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
-			   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
-			   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
-			week.week_start,
-			week.heating_kwh,
-			week.cooling_kwh,
-			week.dhw_kwh
-		);
+		if (userId) {
+			await db.run(
+				`INSERT INTO weekly_consumption (user_id, week_start, heating_kwh, cooling_kwh, dhw_kwh)
+				 VALUES (?, ?, ?, ?, ?)
+				 ON CONFLICT(user_id, week_start) DO UPDATE SET
+				   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
+				   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
+				   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
+				userId,
+				week.week_start,
+				week.heating_kwh,
+				week.cooling_kwh,
+				week.dhw_kwh
+			);
+		} else {
+			await db.run(
+				`INSERT INTO weekly_consumption (week_start, heating_kwh, cooling_kwh, dhw_kwh)
+				 VALUES (?, ?, ?, ?)
+				 ON CONFLICT(week_start) DO UPDATE SET
+				   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
+				   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
+				   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
+				week.week_start,
+				week.heating_kwh,
+				week.cooling_kwh,
+				week.dhw_kwh
+			);
+		}
 	}
 
 	// Save monthly consumption data
 	for (const month of consumption.monthly) {
-		await db.run(
-			`INSERT INTO monthly_consumption (month, heating_kwh, cooling_kwh, dhw_kwh)
-			 VALUES (?, ?, ?, ?)
-			 ON CONFLICT(month) DO UPDATE SET
-			   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
-			   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
-			   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
-			month.month,
-			month.heating_kwh,
-			month.cooling_kwh,
-			month.dhw_kwh
-		);
+		if (userId) {
+			await db.run(
+				`INSERT INTO monthly_consumption (user_id, month, heating_kwh, cooling_kwh, dhw_kwh)
+				 VALUES (?, ?, ?, ?, ?)
+				 ON CONFLICT(user_id, month) DO UPDATE SET
+				   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
+				   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
+				   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
+				userId,
+				month.month,
+				month.heating_kwh,
+				month.cooling_kwh,
+				month.dhw_kwh
+			);
+		} else {
+			await db.run(
+				`INSERT INTO monthly_consumption (month, heating_kwh, cooling_kwh, dhw_kwh)
+				 VALUES (?, ?, ?, ?)
+				 ON CONFLICT(month) DO UPDATE SET
+				   heating_kwh = COALESCE(excluded.heating_kwh, heating_kwh),
+				   cooling_kwh = COALESCE(excluded.cooling_kwh, cooling_kwh),
+				   dhw_kwh = COALESCE(excluded.dhw_kwh, dhw_kwh)`,
+				month.month,
+				month.heating_kwh,
+				month.cooling_kwh,
+				month.dhw_kwh
+			);
+		}
 	}
 }
 
 export async function getHourlyConsumption(
 	db: Database,
-	days: number = 7
+	days: number = 7,
+	userId?: string
 ): Promise<HourlyConsumption[]> {
 	const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+	if (userId) {
+		return db.all<HourlyConsumption>(
+			`SELECT timestamp, hour, heating_kwh, cooling_kwh, dhw_kwh
+			 FROM energy_consumption
+			 WHERE timestamp >= ? AND user_id = ?
+			 ORDER BY timestamp, hour`,
+			since, userId
+		);
+	}
+
 	return db.all<HourlyConsumption>(
 		`SELECT timestamp, hour, heating_kwh, cooling_kwh, dhw_kwh
 		 FROM energy_consumption
@@ -336,8 +569,20 @@ export async function getHourlyConsumption(
 
 export async function getWeeklyConsumption(
 	db: Database,
-	weeks: number = 14
+	weeks: number = 14,
+	userId?: string
 ): Promise<WeeklyConsumption[]> {
+	if (userId) {
+		return db.all<WeeklyConsumption>(
+			`SELECT week_start, heating_kwh, cooling_kwh, dhw_kwh
+			 FROM weekly_consumption
+			 WHERE user_id = ?
+			 ORDER BY week_start DESC
+			 LIMIT ?`,
+			userId,
+			weeks
+		);
+	}
 	return db.all<WeeklyConsumption>(
 		`SELECT week_start, heating_kwh, cooling_kwh, dhw_kwh
 		 FROM weekly_consumption
@@ -349,8 +594,20 @@ export async function getWeeklyConsumption(
 
 export async function getMonthlyConsumption(
 	db: Database,
-	months: number = 24
+	months: number = 24,
+	userId?: string
 ): Promise<MonthlyConsumption[]> {
+	if (userId) {
+		return db.all<MonthlyConsumption>(
+			`SELECT month, heating_kwh, cooling_kwh, dhw_kwh
+			 FROM monthly_consumption
+			 WHERE user_id = ?
+			 ORDER BY month DESC
+			 LIMIT ?`,
+			userId,
+			months
+		);
+	}
 	return db.all<MonthlyConsumption>(
 		`SELECT month, heating_kwh, cooling_kwh, dhw_kwh
 		 FROM monthly_consumption
@@ -361,7 +618,7 @@ export async function getMonthlyConsumption(
 }
 
 // ============================================
-// Heating Schedule (Daily Planning) Helpers
+// Heating Schedule (Daily Planning) Helpers (user-scoped)
 // ============================================
 
 /**
@@ -370,26 +627,48 @@ export async function getMonthlyConsumption(
 export async function saveHeatingSchedule(
 	db: Database,
 	date: string,
-	hours: PlannedHeatingHour[]
+	hours: PlannedHeatingHour[],
+	userId?: string
 ): Promise<void> {
 	for (const hour of hours) {
-		await db.run(
-			`INSERT INTO heating_schedule (date, hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(date, hour) DO UPDATE SET
-         planned_offset = excluded.planned_offset,
-         outdoor_temp_forecast = excluded.outdoor_temp_forecast,
-         price_cent_kwh = excluded.price_cent_kwh,
-         reason = excluded.reason,
-         created_at = datetime('now'),
-         applied_at = NULL`,
-			date,
-			hour.hour,
-			hour.planned_offset,
-			hour.outdoor_temp_forecast,
-			hour.price_cent_kwh,
-			hour.reason
-		);
+		if (userId) {
+			await db.run(
+				`INSERT INTO heating_schedule (user_id, date, hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, date, hour) DO UPDATE SET
+           planned_offset = excluded.planned_offset,
+           outdoor_temp_forecast = excluded.outdoor_temp_forecast,
+           price_cent_kwh = excluded.price_cent_kwh,
+           reason = excluded.reason,
+           created_at = datetime('now'),
+           applied_at = NULL`,
+				userId,
+				date,
+				hour.hour,
+				hour.planned_offset,
+				hour.outdoor_temp_forecast,
+				hour.price_cent_kwh,
+				hour.reason
+			);
+		} else {
+			await db.run(
+				`INSERT INTO heating_schedule (date, hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(date, hour) DO UPDATE SET
+           planned_offset = excluded.planned_offset,
+           outdoor_temp_forecast = excluded.outdoor_temp_forecast,
+           price_cent_kwh = excluded.price_cent_kwh,
+           reason = excluded.reason,
+           created_at = datetime('now'),
+           applied_at = NULL`,
+				date,
+				hour.hour,
+				hour.planned_offset,
+				hour.outdoor_temp_forecast,
+				hour.price_cent_kwh,
+				hour.reason
+			);
+		}
 	}
 }
 
@@ -398,18 +677,31 @@ export async function saveHeatingSchedule(
  */
 export async function getHeatingScheduleForDate(
 	db: Database,
-	date: string
+	date: string,
+	userId?: string
 ): Promise<PlannedHeatingHour[]> {
-	const rows = await db.all<{
-		hour: number;
-		planned_offset: number;
-		outdoor_temp_forecast: number | null;
-		price_cent_kwh: number;
-		reason: string;
-	}>(
-		'SELECT hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason FROM heating_schedule WHERE date = ? ORDER BY hour',
-		date
-	);
+	const rows = userId
+		? await db.all<{
+			hour: number;
+			planned_offset: number;
+			outdoor_temp_forecast: number | null;
+			price_cent_kwh: number;
+			reason: string;
+		}>(
+			'SELECT hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason FROM heating_schedule WHERE user_id = ? AND date = ? ORDER BY hour',
+			userId,
+			date
+		)
+		: await db.all<{
+			hour: number;
+			planned_offset: number;
+			outdoor_temp_forecast: number | null;
+			price_cent_kwh: number;
+			reason: string;
+		}>(
+			'SELECT hour, planned_offset, outdoor_temp_forecast, price_cent_kwh, reason FROM heating_schedule WHERE date = ? ORDER BY hour',
+			date
+		);
 
 	return rows.map(row => ({
 		hour: row.hour,
@@ -426,13 +718,21 @@ export async function getHeatingScheduleForDate(
 export async function getPlannedOffsetForHour(
 	db: Database,
 	date: string,
-	hour: number
+	hour: number,
+	userId?: string
 ): Promise<number | null> {
-	const row = await db.get<{ planned_offset: number }>(
-		'SELECT planned_offset FROM heating_schedule WHERE date = ? AND hour = ?',
-		date,
-		hour
-	);
+	const row = userId
+		? await db.get<{ planned_offset: number }>(
+			'SELECT planned_offset FROM heating_schedule WHERE user_id = ? AND date = ? AND hour = ?',
+			userId,
+			date,
+			hour
+		)
+		: await db.get<{ planned_offset: number }>(
+			'SELECT planned_offset FROM heating_schedule WHERE date = ? AND hour = ?',
+			date,
+			hour
+		);
 	return row?.planned_offset ?? null;
 }
 
@@ -442,17 +742,27 @@ export async function getPlannedOffsetForHour(
 export async function markHeatingScheduleApplied(
 	db: Database,
 	date: string,
-	hour: number
+	hour: number,
+	userId?: string
 ): Promise<void> {
-	await db.run(
-		`UPDATE heating_schedule SET applied_at = datetime('now') WHERE date = ? AND hour = ?`,
-		date,
-		hour
-	);
+	if (userId) {
+		await db.run(
+			`UPDATE heating_schedule SET applied_at = datetime('now') WHERE user_id = ? AND date = ? AND hour = ?`,
+			userId,
+			date,
+			hour
+		);
+	} else {
+		await db.run(
+			`UPDATE heating_schedule SET applied_at = datetime('now') WHERE date = ? AND hour = ?`,
+			date,
+			hour
+		);
+	}
 }
 
 // ============================================
-// DHW Schedule (Daily Planning) Helpers
+// DHW Schedule (Daily Planning) Helpers (user-scoped)
 // ============================================
 
 /**
@@ -461,24 +771,44 @@ export async function markHeatingScheduleApplied(
 export async function saveDHWSchedule(
 	db: Database,
 	date: string,
-	hours: PlannedDHWHour[]
+	hours: PlannedDHWHour[],
+	userId?: string
 ): Promise<void> {
 	for (const hour of hours) {
-		await db.run(
-			`INSERT INTO dhw_schedule (date, hour, planned_temp, price_cent_kwh, reason)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(date, hour) DO UPDATE SET
-         planned_temp = excluded.planned_temp,
-         price_cent_kwh = excluded.price_cent_kwh,
-         reason = excluded.reason,
-         created_at = datetime('now'),
-         applied_at = NULL`,
-			date,
-			hour.hour,
-			hour.planned_temp,
-			hour.price_cent_kwh,
-			hour.reason
-		);
+		if (userId) {
+			await db.run(
+				`INSERT INTO dhw_schedule (user_id, date, hour, planned_temp, price_cent_kwh, reason)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, date, hour) DO UPDATE SET
+           planned_temp = excluded.planned_temp,
+           price_cent_kwh = excluded.price_cent_kwh,
+           reason = excluded.reason,
+           created_at = datetime('now'),
+           applied_at = NULL`,
+				userId,
+				date,
+				hour.hour,
+				hour.planned_temp,
+				hour.price_cent_kwh,
+				hour.reason
+			);
+		} else {
+			await db.run(
+				`INSERT INTO dhw_schedule (date, hour, planned_temp, price_cent_kwh, reason)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(date, hour) DO UPDATE SET
+           planned_temp = excluded.planned_temp,
+           price_cent_kwh = excluded.price_cent_kwh,
+           reason = excluded.reason,
+           created_at = datetime('now'),
+           applied_at = NULL`,
+				date,
+				hour.hour,
+				hour.planned_temp,
+				hour.price_cent_kwh,
+				hour.reason
+			);
+		}
 	}
 }
 
@@ -487,17 +817,29 @@ export async function saveDHWSchedule(
  */
 export async function getDHWScheduleForDate(
 	db: Database,
-	date: string
+	date: string,
+	userId?: string
 ): Promise<PlannedDHWHour[]> {
-	const rows = await db.all<{
-		hour: number;
-		planned_temp: number;
-		price_cent_kwh: number;
-		reason: string;
-	}>(
-		'SELECT hour, planned_temp, price_cent_kwh, reason FROM dhw_schedule WHERE date = ? ORDER BY hour',
-		date
-	);
+	const rows = userId
+		? await db.all<{
+			hour: number;
+			planned_temp: number;
+			price_cent_kwh: number;
+			reason: string;
+		}>(
+			'SELECT hour, planned_temp, price_cent_kwh, reason FROM dhw_schedule WHERE user_id = ? AND date = ? ORDER BY hour',
+			userId,
+			date
+		)
+		: await db.all<{
+			hour: number;
+			planned_temp: number;
+			price_cent_kwh: number;
+			reason: string;
+		}>(
+			'SELECT hour, planned_temp, price_cent_kwh, reason FROM dhw_schedule WHERE date = ? ORDER BY hour',
+			date
+		);
 
 	return rows.map(row => ({
 		hour: row.hour,
@@ -513,13 +855,21 @@ export async function getDHWScheduleForDate(
 export async function getPlannedDHWTempForHour(
 	db: Database,
 	date: string,
-	hour: number
+	hour: number,
+	userId?: string
 ): Promise<number | null> {
-	const row = await db.get<{ planned_temp: number }>(
-		'SELECT planned_temp FROM dhw_schedule WHERE date = ? AND hour = ?',
-		date,
-		hour
-	);
+	const row = userId
+		? await db.get<{ planned_temp: number }>(
+			'SELECT planned_temp FROM dhw_schedule WHERE user_id = ? AND date = ? AND hour = ?',
+			userId,
+			date,
+			hour
+		)
+		: await db.get<{ planned_temp: number }>(
+			'SELECT planned_temp FROM dhw_schedule WHERE date = ? AND hour = ?',
+			date,
+			hour
+		);
 	return row?.planned_temp ?? null;
 }
 
@@ -529,13 +879,23 @@ export async function getPlannedDHWTempForHour(
 export async function markDHWScheduleApplied(
 	db: Database,
 	date: string,
-	hour: number
+	hour: number,
+	userId?: string
 ): Promise<void> {
-	await db.run(
-		`UPDATE dhw_schedule SET applied_at = datetime('now') WHERE date = ? AND hour = ?`,
-		date,
-		hour
-	);
+	if (userId) {
+		await db.run(
+			`UPDATE dhw_schedule SET applied_at = datetime('now') WHERE user_id = ? AND date = ? AND hour = ?`,
+			userId,
+			date,
+			hour
+		);
+	} else {
+		await db.run(
+			`UPDATE dhw_schedule SET applied_at = datetime('now') WHERE date = ? AND hour = ?`,
+			date,
+			hour
+		);
+	}
 }
 
 /**
@@ -543,10 +903,11 @@ export async function markDHWScheduleApplied(
  */
 export async function getDailySchedule(
 	db: Database,
-	date: string
+	date: string,
+	userId?: string
 ): Promise<DailySchedule | null> {
-	const heating = await getHeatingScheduleForDate(db, date);
-	const dhw = await getDHWScheduleForDate(db, date);
+	const heating = await getHeatingScheduleForDate(db, date, userId);
+	const dhw = await getDHWScheduleForDate(db, date, userId);
 
 	if (heating.length === 0 && dhw.length === 0) {
 		return null;
@@ -562,11 +923,16 @@ export async function getDailySchedule(
 /**
  * Clean up old schedules (older than 7 days)
  */
-export async function cleanupOldSchedules(db: Database): Promise<void> {
+export async function cleanupOldSchedules(db: Database, userId?: string): Promise<void> {
 	const cutoff = new Date();
 	cutoff.setDate(cutoff.getDate() - 7);
 	const cutoffStr = cutoff.toISOString().split('T')[0];
 
-	await db.run('DELETE FROM heating_schedule WHERE date < ?', cutoffStr);
-	await db.run('DELETE FROM dhw_schedule WHERE date < ?', cutoffStr);
+	if (userId) {
+		await db.run('DELETE FROM heating_schedule WHERE user_id = ? AND date < ?', userId, cutoffStr);
+		await db.run('DELETE FROM dhw_schedule WHERE user_id = ? AND date < ?', userId, cutoffStr);
+	} else {
+		await db.run('DELETE FROM heating_schedule WHERE date < ?', cutoffStr);
+		await db.run('DELETE FROM dhw_schedule WHERE date < ?', cutoffStr);
+	}
 }

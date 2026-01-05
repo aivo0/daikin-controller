@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { createD1Wrapper, getSettings, getHeatingScheduleForDate } from '$lib/server/db';
+import { createD1Wrapper, getUserSettings, getHeatingScheduleForDate } from '$lib/server/db';
 import { getTodayPrices, getTomorrowPrices, eurMwhToCentKwh } from '$lib/server/elering';
 import { getWeatherForDate } from '$lib/server/weather';
 import { calculatePriceProportionalOffsets } from '$lib/server/scheduler';
@@ -11,6 +11,8 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 		throw error(401, 'Not authenticated');
 	}
 
+	const userId = locals.user.id;
+
 	if (!platform?.env?.DB) {
 		throw error(500, 'Database not configured');
 	}
@@ -18,7 +20,7 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 	const db = createD1Wrapper(platform.env.DB);
 
 	try {
-		const settings = await getSettings(db);
+		const settings = await getUserSettings(db, userId);
 		const now = new Date();
 		const currentHour = now.getHours();
 		const todayStr = now.toISOString().split('T')[0];
@@ -46,8 +48,8 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 		const calculatedOffsets = calculatePriceProportionalOffsets(allPrices, allWeather, settings);
 
 		// Get stored schedules
-		const todaySchedule = await getHeatingScheduleForDate(db, todayStr);
-		const tomorrowSchedule = await getHeatingScheduleForDate(db, tomorrowStr);
+		const todaySchedule = await getHeatingScheduleForDate(db, todayStr, userId);
+		const tomorrowSchedule = await getHeatingScheduleForDate(db, tomorrowStr, userId);
 
 		// Calculate price statistics
 		const pricesCentKwh = allPrices.map(p => eurMwhToCentKwh(p.price_eur_mwh));

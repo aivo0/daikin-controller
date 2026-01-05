@@ -213,6 +213,54 @@
 			</div>
 		</div>
 
+		<!-- Location Settings -->
+		<div class="card bg-base-100 shadow-xl mb-6">
+			<div class="card-body">
+				<h2 class="card-title">Asukoha seaded</h2>
+				<p class="text-sm opacity-70 mb-4">
+					Ilmaprognoosi saamiseks kasutatakse teie asukohta. Sisestage koordinaadid kümnendkraadides.
+				</p>
+
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+					<div class="form-control">
+						<label class="label" for="weather_location_lat">
+							<span class="label-text">Laiuskraad (Latitude)</span>
+						</label>
+						<input
+							type="number"
+							id="weather_location_lat"
+							name="weather_location_lat"
+							value={data.settings.weather_location_lat}
+							min="-90"
+							max="90"
+							step="0.0001"
+							class="input input-bordered"
+							placeholder="59.3"
+						/>
+						<span class="label-text-alt mt-1">-90 kuni 90 (nt Tallinn: 59.4)</span>
+					</div>
+
+					<div class="form-control">
+						<label class="label" for="weather_location_lon">
+							<span class="label-text">Pikkuskraad (Longitude)</span>
+						</label>
+						<input
+							type="number"
+							id="weather_location_lon"
+							name="weather_location_lon"
+							value={data.settings.weather_location_lon}
+							min="-180"
+							max="180"
+							step="0.0001"
+							class="input input-bordered"
+							placeholder="24.7"
+						/>
+						<span class="label-text-alt mt-1">-180 kuni 180 (nt Tallinn: 24.7)</span>
+					</div>
+				</div>
+			</div>
+		</div>
+
 		<!-- Algorithm Info -->
 		<div class="card bg-base-200 shadow-xl mb-6">
 			<div class="card-body">
@@ -222,7 +270,7 @@
 					<li><strong>50% garantii:</strong> Vähemalt pooltel tundidel on kütmine normaalsel või kõrgemal tasemel</li>
 					<li><strong>Hinnapõhine nihe:</strong> Odavatel tundidel nihe +1 kuni +7, kallistel -1 kuni -7</li>
 					<li><strong>Külma ilma kaitse:</strong> Alla {data.settings.cold_weather_threshold}°C vähendatakse kallite tundide karistust</li>
-					<li><strong>Ilmaprognoos:</strong> Kasutatakse Open-Meteo API-t (Luige alevik, Harjumaa)</li>
+					<li><strong>Ilmaprognoos:</strong> Kasutatakse Open-Meteo API-t teie asukohas</li>
 				</ul>
 			</div>
 		</div>

@@ -8,6 +8,8 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 		throw redirect(302, '/login');
 	}
 
+	const userId = locals.user.id;
+
 	if (!platform?.env?.DB) {
 		return {
 			error: 'Database not configured',
@@ -18,7 +20,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 	const db = createD1Wrapper(platform.env.DB);
 
 	try {
-		const logs = await getRecentControlLogs(db, 100);
+		const logs = await getRecentControlLogs(db, 100, userId);
 
 		return {
 			logs,
