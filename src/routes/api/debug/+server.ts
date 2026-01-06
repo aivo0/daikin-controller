@@ -81,7 +81,7 @@ export const POST: RequestHandler = async ({ platform, locals, request }) => {
 	const db = createD1Wrapper(platform.env.DB);
 
 	try {
-		const body = await request.json();
+		const body = await request.json() as { action?: string; date?: string };
 		const action = body.action;
 
 		if (action === 'planToday') {

@@ -5,6 +5,8 @@ import { isConnected } from '$lib/server/daikin';
 import { previewControlAction } from '$lib/server/scheduler';
 import type { PlannedHeatingHour } from '$lib/types';
 
+type HeatingScheduleWithDate = PlannedHeatingHour & { date: string };
+
 export const load: PageServerLoad = async ({ platform, locals }) => {
 	const isAuthenticated = !!locals.user;
 	const userId = locals.user?.id;
@@ -17,7 +19,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 			currentPrice: null,
 			settings: null,
 			nextAction: null,
-			heatingSchedule: [] as PlannedHeatingHour[],
+			heatingSchedule: [] as HeatingScheduleWithDate[],
 			isConnected: false,
 			isAuthenticated
 		};
@@ -37,7 +39,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 		let settings = null;
 		let connected = false;
 		let nextAction = null;
-		let heatingSchedule: PlannedHeatingHour[] = [];
+		let heatingSchedule: HeatingScheduleWithDate[] = [];
 
 		if (isAuthenticated && userId) {
 			// Get today and tomorrow dates
@@ -88,7 +90,7 @@ export const load: PageServerLoad = async ({ platform, locals }) => {
 			currentPrice: null,
 			settings: null,
 			nextAction: null,
-			heatingSchedule: [] as PlannedHeatingHour[],
+			heatingSchedule: [] as HeatingScheduleWithDate[],
 			isConnected: false,
 			isAuthenticated
 		};

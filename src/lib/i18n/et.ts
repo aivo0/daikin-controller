@@ -90,6 +90,7 @@ export default {
 		connectDaikin: 'Ühenda Daikini konto',
 		disconnect: 'Katkesta ühendus',
 		reconnect: 'Ühenda uuesti',
+		daikinDisconnected: 'Daikini konto ühendus katkestatud',
 		heatingAlgorithm: 'Kütmise algoritm',
 		algorithmDescription: 'Algoritm planeerib iga päev kell 15:00 järgmise päeva küttegraafiku, kasutades elektrihindu ja ilmaprognoosi.',
 		priceSensitivity: 'Hinnatundlikkus (K)',

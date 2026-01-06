@@ -90,6 +90,7 @@ export default {
 		connectDaikin: 'Connect Daikin account',
 		disconnect: 'Disconnect',
 		reconnect: 'Reconnect',
+		daikinDisconnected: 'Daikin account disconnected',
 		heatingAlgorithm: 'Heating Algorithm',
 		algorithmDescription: 'The algorithm plans the next day\'s heating schedule daily at 3 PM using electricity prices and weather forecast.',
 		priceSensitivity: 'Price sensitivity (K)',

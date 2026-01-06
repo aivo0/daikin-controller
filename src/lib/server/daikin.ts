@@ -99,7 +99,11 @@ export async function refreshAccessToken(
 		throw new Error(`Token refresh failed: ${response.status} - ${error}`);
 	}
 
-	const data = await response.json();
+	const data = await response.json() as {
+		access_token: string;
+		refresh_token?: string;
+		expires_in: number;
+	};
 
 	const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
 

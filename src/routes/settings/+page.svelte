@@ -37,7 +37,7 @@
 
 {#if form?.disconnected}
 	<div class="alert alert-info mb-4">
-		<span>{$t.settings.daikinDisconnected || 'Daikin account disconnected'}</span>
+		<span>{$t.settings.daikinDisconnected}</span>
 	</div>
 {/if}
 

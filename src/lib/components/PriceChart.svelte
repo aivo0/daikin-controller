@@ -301,8 +301,9 @@
 							font: { size: 11, weight: 500 },
 							stepSize: 5,
 							callback: (value) => {
-								if (value === 0) return '0';
-								return (value > 0 ? '+' : '') + value;
+								const num = Number(value);
+								if (num === 0) return '0';
+								return (num > 0 ? '+' : '') + num;
 							}
 						}
 					}

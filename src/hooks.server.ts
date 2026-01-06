@@ -1,4 +1,5 @@
 import type { Handle } from '@sveltejs/kit';
+import { building } from '$app/environment';
 import { createAuth } from '$lib/server/auth';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 
@@ -37,5 +38,5 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	// Handle auth API routes
-	return svelteKitHandler({ event, resolve, auth });
+	return svelteKitHandler({ event, resolve, auth, building });
 };

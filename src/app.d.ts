@@ -7,7 +7,7 @@ declare global {
 				id: string;
 				email: string;
 				name: string;
-				image?: string;
+				image?: string | null;
 			} | null;
 			session: {
 				id: string;

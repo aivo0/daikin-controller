@@ -184,6 +184,14 @@ export interface DaikinManagementPoint {
 	operationMode?: {
 		value: string;
 	};
+	consumptionData?: {
+		value?: {
+			electrical?: {
+				heating?: { d?: (number | null)[]; w?: (number | null)[]; m?: (number | null)[] };
+				cooling?: { d?: (number | null)[]; w?: (number | null)[]; m?: (number | null)[] };
+			};
+		};
+	};
 }
 
 // Elering API response
