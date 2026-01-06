@@ -1,5 +1,6 @@
 import type { PageServerLoad, Actions } from './$types';
-import { createD1Wrapper, getUserSettings, updateUserSetting } from '$lib/server/db';
+import { createD1Wrapper, getUserSettings, updateUserSetting, deleteUserTokens } from '$lib/server/db';
+import { createAuth } from '$lib/server/auth';
 import { isConnected, getAuthorizationUrl } from '$lib/server/daikin';
 import { planForDate } from '$lib/server/scheduler';
 import { fail, redirect } from '@sveltejs/kit';
@@ -146,6 +147,69 @@ export const actions: Actions = {
 			console.error('Recalculate error:', error);
 			return fail(500, {
 				message: error instanceof Error ? error.message : 'Failed to recalculate'
+			});
+		}
+	},
+
+	disconnectDaikin: async ({ platform, locals }) => {
+		if (!locals.user) {
+			return fail(401, { message: 'Not authenticated' });
+		}
+
+		const userId = locals.user.id;
+
+		if (!platform?.env?.DB) {
+			return fail(500, { message: 'Database not configured' });
+		}
+
+		const db = createD1Wrapper(platform.env.DB);
+
+		try {
+			await deleteUserTokens(db, userId);
+			return { disconnected: true };
+		} catch (error) {
+			console.error('Disconnect error:', error);
+			return fail(500, {
+				message: error instanceof Error ? error.message : 'Failed to disconnect'
+			});
+		}
+	},
+
+	deleteAccount: async ({ platform, locals, request }) => {
+		if (!locals.user) {
+			return fail(401, { message: 'Not authenticated' });
+		}
+
+		if (!platform?.env?.DB) {
+			return fail(500, { message: 'Database not configured' });
+		}
+
+		try {
+			const auth = createAuth(platform.env);
+
+			// Get the session cookie from the request
+			const cookieHeader = request.headers.get('cookie') || '';
+
+			// Delete user using better-auth API
+			await auth.api.deleteUser({
+				body: {},
+				headers: new Headers({
+					cookie: cookieHeader
+				})
+			});
+
+			// Redirect to login page after successful deletion
+			throw redirect(303, '/login?deleted=true');
+		} catch (error) {
+			// If it's a redirect, rethrow it
+			if (error instanceof Response || (error as { status?: number })?.status === 303) {
+				throw error;
+			}
+
+			console.error('Delete account error:', error);
+			return fail(500, {
+				message: error instanceof Error ? error.message : 'Failed to delete account',
+				deleteError: true
 			});
 		}
 	}

@@ -131,7 +131,28 @@ export default {
 		weatherForecastDesc: 'Uses Open-Meteo API for your location',
 		manualRecalc: 'Manual Recalculation',
 		manualRecalcDesc: 'Recalculate today\'s heating schedule now using current settings and prices. Useful after changing settings to see changes immediately.',
-		recalcButton: 'Recalculate today\'s schedule'
+		recalcButton: 'Recalculate today\'s schedule',
+
+		// Danger Zone
+		dangerZone: 'Danger Zone',
+		dangerZoneDescription: 'Irreversible and destructive actions',
+		deleteAccount: 'Delete Account',
+		deleteAccountDescription: 'Permanently delete your account and all associated data. This action cannot be undone.',
+		deleteAccountButton: 'Delete my account',
+		deleteAccountConfirmTitle: 'Delete Account?',
+		deleteAccountConfirmMessage: 'Are you sure you want to delete your account? This will permanently remove:',
+		deleteAccountConfirmList: [
+			'Your user profile and settings',
+			'All heating and DHW schedules',
+			'Energy consumption history',
+			'Device state history',
+			'Daikin account connection'
+		],
+		deleteAccountConfirmWarning: 'This action cannot be undone.',
+		deleteAccountConfirm: 'Yes, delete my account',
+		deleteAccountCancel: 'Cancel',
+		accountDeleted: 'Your account has been deleted.',
+		deleteAccountError: 'Failed to delete account. Please try again.'
 	},
 
 	history: {

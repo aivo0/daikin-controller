@@ -3,6 +3,7 @@ import { redirect, error } from '@sveltejs/kit';
 import { createD1Wrapper, saveUserTokens } from '$lib/server/db';
 import { exchangeCodeForTokens } from '$lib/server/daikin';
 import { createAuth } from '$lib/server/auth';
+import { executeScheduledTask } from '$lib/server/scheduler';
 
 export const GET: RequestHandler = async ({ url, platform, request }) => {
 	const code = url.searchParams.get('code');
@@ -49,6 +50,15 @@ export const GET: RequestHandler = async ({ url, platform, request }) => {
 		const db = createD1Wrapper(platform.env.DB);
 		// Save tokens associated with the current user
 		await saveUserTokens(db, userId, tokens);
+
+		// Try to fetch device data immediately so user sees data on first dashboard load
+		try {
+			console.log('Fetching initial device data for user:', userId);
+			await executeScheduledTask(db, clientId, clientSecret, userId);
+		} catch (e) {
+			// Don't fail OAuth if initial fetch fails - cron will pick up later
+			console.error('Initial device fetch failed (will retry on cron):', e);
+		}
 
 		return new Response(null, {
 			status: 303,

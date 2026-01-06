@@ -4,6 +4,9 @@
 	import { t } from '$lib/i18n';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	let deleteModal: HTMLDialogElement;
+	let isDeleting = $state(false);
 </script>
 
 <h1 class="text-2xl font-bold mb-6">{$t.settings.title}</h1>
@@ -32,15 +35,28 @@
 	</div>
 {/if}
 
+{#if form?.disconnected}
+	<div class="alert alert-info mb-4">
+		<span>{$t.settings.daikinDisconnected || 'Daikin account disconnected'}</span>
+	</div>
+{/if}
+
 <!-- Daikin Connection -->
 <div class="card bg-base-100 shadow-xl mb-6">
 	<div class="card-body">
 		<h2 class="card-title">{$t.settings.daikinConnection}</h2>
 
 		{#if data.isConnected}
-			<div class="flex items-center gap-2">
-				<span class="badge badge-success">{$t.settings.connected}</span>
-				<span class="text-sm opacity-70">{$t.settings.daikinConnected}</span>
+			<div class="flex items-center justify-between">
+				<div class="flex items-center gap-2">
+					<span class="badge badge-success">{$t.settings.connected}</span>
+					<span class="text-sm opacity-70">{$t.settings.daikinConnected}</span>
+				</div>
+				<form method="POST" action="?/disconnectDaikin" use:enhance>
+					<button type="submit" class="btn btn-sm btn-ghost text-error">
+						{$t.settings.disconnect || 'Disconnect'}
+					</button>
+				</form>
 			</div>
 		{:else}
 			<p class="text-sm opacity-70 mb-4">
@@ -295,3 +311,84 @@
 		</div>
 	</div>
 {/if}
+
+<!-- Danger Zone -->
+<div class="card bg-base-100 shadow-xl border-2 border-error mt-8">
+	<div class="card-body">
+		<h2 class="card-title text-error">
+			<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+			</svg>
+			{$t.settings.dangerZone}
+		</h2>
+		<p class="text-sm opacity-70 mb-4">
+			{$t.settings.dangerZoneDescription}
+		</p>
+
+		<div class="border border-error rounded-lg p-4">
+			<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+				<div>
+					<h3 class="font-semibold">{$t.settings.deleteAccount}</h3>
+					<p class="text-sm opacity-70">{$t.settings.deleteAccountDescription}</p>
+				</div>
+				<button
+					type="button"
+					class="btn btn-error btn-outline"
+					onclick={() => deleteModal.showModal()}
+				>
+					{$t.settings.deleteAccountButton}
+				</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- Delete Account Confirmation Modal -->
+<dialog bind:this={deleteModal} class="modal">
+	<div class="modal-box">
+		<h3 class="text-lg font-bold text-error flex items-center gap-2">
+			<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+			</svg>
+			{$t.settings.deleteAccountConfirmTitle}
+		</h3>
+		<p class="py-4">{$t.settings.deleteAccountConfirmMessage}</p>
+		<ul class="list-disc list-inside mb-4 text-sm opacity-80">
+			{#each $t.settings.deleteAccountConfirmList as item}
+				<li>{item}</li>
+			{/each}
+		</ul>
+		<div class="alert alert-warning mb-4">
+			<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+			</svg>
+			<span>{$t.settings.deleteAccountConfirmWarning}</span>
+		</div>
+		<div class="modal-action">
+			<form method="dialog">
+				<button class="btn">{$t.settings.deleteAccountCancel}</button>
+			</form>
+			<form
+				method="POST"
+				action="?/deleteAccount"
+				use:enhance={() => {
+					isDeleting = true;
+					return async ({ update }) => {
+						await update();
+						isDeleting = false;
+					};
+				}}
+			>
+				<button type="submit" class="btn btn-error" disabled={isDeleting}>
+					{#if isDeleting}
+						<span class="loading loading-spinner loading-sm"></span>
+					{/if}
+					{$t.settings.deleteAccountConfirm}
+				</button>
+			</form>
+		</div>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button>close</button>
+	</form>
+</dialog>

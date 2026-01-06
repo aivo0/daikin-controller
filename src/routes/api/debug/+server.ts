@@ -22,9 +22,10 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 	}
 
 	const db = createD1Wrapper(platform.env.DB);
+	const userId = locals.user.id;
 
 	try {
-		const accessToken = await getValidAccessToken(db, clientId, clientSecret);
+		const accessToken = await getValidAccessToken(db, clientId, clientSecret, userId);
 		if (!accessToken) {
 			return json({ error: 'Not connected to Daikin' });
 		}

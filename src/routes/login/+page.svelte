@@ -1,9 +1,12 @@
 <script lang="ts">
 	import { authClient } from '$lib/auth-client';
+	import { page } from '$app/stores';
 	import { t } from '$lib/i18n';
 
 	let loading = $state(false);
 	let error = $state<string | null>(null);
+
+	const wasDeleted = $derived($page.url.searchParams.get('deleted') === 'true');
 
 	async function signInWithGoogle() {
 		loading = true;
@@ -27,6 +30,12 @@
 			<p class="text-base-content/70 mb-6">
 				{$t.login.description}
 			</p>
+
+			{#if wasDeleted}
+				<div class="alert alert-success mb-4">
+					<span>{$t.settings.accountDeleted}</span>
+				</div>
+			{/if}
 
 			{#if error}
 				<div class="alert alert-error mb-4">

@@ -131,7 +131,28 @@ export default {
 		weatherForecastDesc: 'Kasutatakse Open-Meteo API-t teie asukohas',
 		manualRecalc: 'Käsitsi ümberarvutus',
 		manualRecalcDesc: 'Arvuta tänane küttegraafik kohe ümber, kasutades praeguseid seadeid ja hindu. Kasulik pärast seadete muutmist, et näha muudatusi kohe.',
-		recalcButton: 'Arvuta tänane graafik ümber'
+		recalcButton: 'Arvuta tänane graafik ümber',
+
+		// Danger Zone
+		dangerZone: 'Ohtlik tsoon',
+		dangerZoneDescription: 'Pöördumatud ja hävitavad toimingud',
+		deleteAccount: 'Kustuta konto',
+		deleteAccountDescription: 'Kustuta jäädavalt oma konto ja kõik seotud andmed. Seda toimingut ei saa tagasi võtta.',
+		deleteAccountButton: 'Kustuta minu konto',
+		deleteAccountConfirmTitle: 'Kustutada konto?',
+		deleteAccountConfirmMessage: 'Kas oled kindel, et soovid oma konto kustutada? See eemaldab jäädavalt:',
+		deleteAccountConfirmList: [
+			'Sinu kasutajaprofiili ja seaded',
+			'Kõik kütte- ja boilerigraafikud',
+			'Energiatarbimise ajaloo',
+			'Seadme oleku ajaloo',
+			'Daikini konto ühenduse'
+		],
+		deleteAccountConfirmWarning: 'Seda toimingut ei saa tagasi võtta.',
+		deleteAccountConfirm: 'Jah, kustuta minu konto',
+		deleteAccountCancel: 'Tühista',
+		accountDeleted: 'Sinu konto on kustutatud.',
+		deleteAccountError: 'Konto kustutamine ebaõnnestus. Palun proovi uuesti.'
 	},
 
 	history: {
