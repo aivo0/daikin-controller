@@ -111,25 +111,6 @@
 					</div>
 
 					<div class="form-control">
-						<label class="label" for="cold_weather_threshold">
-							<span class="label-text">{$t.settings.coldWeatherThreshold}</span>
-						</label>
-						<input
-							type="number"
-							id="cold_weather_threshold"
-							name="cold_weather_threshold"
-							value={data.settings.cold_weather_threshold}
-							min="-20"
-							max="5"
-							step="1"
-							class="input input-bordered"
-						/>
-						<span class="label-text-alt mt-1">
-							{$t.settings.coldWeatherHelp}
-						</span>
-					</div>
-
-					<div class="form-control">
 						<label class="label" for="planning_hour">
 							<span class="label-text">{$t.settings.planningHour}</span>
 						</label>
@@ -285,8 +266,7 @@
 					<li><strong>{$t.settings.dailyPlanning}:</strong> {data.settings.planning_hour}:00 {$t.settings.dailyPlanningDesc}</li>
 					<li><strong>{$t.settings.guarantee}:</strong> {$t.settings.guaranteeDesc}</li>
 					<li><strong>{$t.settings.priceOffset}:</strong> {$t.settings.priceOffsetDesc}</li>
-					<li><strong>{$t.settings.coldProtection}:</strong> {data.settings.cold_weather_threshold}°C {$t.settings.coldProtectionDesc}</li>
-					<li><strong>{$t.settings.weatherForecast}:</strong> {$t.settings.weatherForecastDesc}</li>
+		<li><strong>{$t.settings.weatherForecast}:</strong> {$t.settings.weatherForecastDesc}</li>
 				</ul>
 			</div>
 		</div>

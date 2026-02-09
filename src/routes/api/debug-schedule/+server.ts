@@ -77,8 +77,7 @@ export const GET: RequestHandler = async ({ platform, locals }) => {
 				tomorrowStr,
 				currentHour,
 				settings: {
-					price_sensitivity: settings.price_sensitivity,
-					cold_weather_threshold: settings.cold_weather_threshold
+					price_sensitivity: settings.price_sensitivity
 				}
 			},
 			priceStats: {

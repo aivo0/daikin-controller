@@ -117,7 +117,6 @@ export interface Settings {
 	dhw_target_temp: number;       // Target when boosting (default: 60°C)
 	// New algorithm settings (daily planning)
 	price_sensitivity: number;         // K constant for offset calculation (1-10, default 7)
-	cold_weather_threshold: number;    // Below this temp, reduce expensive penalties (default -5)
 	planning_hour: number;             // Hour to run daily planning (default 15)
 	weather_location_lat: number;      // Latitude for weather forecast
 	weather_location_lon: number;      // Longitude for weather forecast

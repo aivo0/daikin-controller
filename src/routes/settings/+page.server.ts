@@ -75,7 +75,6 @@ export const actions: Actions = {
 			// Update algorithm settings
 			const settingsToUpdate = [
 				'price_sensitivity',
-				'cold_weather_threshold',
 				'planning_hour',
 				'low_price_threshold',
 				'dhw_min_temp',

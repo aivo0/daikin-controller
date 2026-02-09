@@ -73,8 +73,7 @@ export interface DailyPlanningResult {
  * 2. Normalize prices to [-1, +1] range relative to median
  * 3. Apply price sensitivity constant K to get raw offset
  * 4. Apply 50% guarantee: cheapest 50% of hours get offset >= 0
- * 5. Apply cold weather adjustment: reduce penalty when very cold
- * 6. Clamp to valid range [-10, +10]
+ * 5. Clamp to valid range [-10, +10]
  *
  * Supports multi-day planning by keying on date+hour
  */
@@ -88,7 +87,6 @@ export function calculatePriceProportionalOffsets(
 	}
 
 	const K = settings.price_sensitivity; // Default: 7
-	const coldThreshold = settings.cold_weather_threshold; // Default: -5
 
 	// Aggregate prices by date+hour (in case we have sub-hourly data)
 	// Key: "YYYY-MM-DD-HH" (using UTC to match browser display)
@@ -158,7 +156,7 @@ export function calculatePriceProportionalOffsets(
 		sortedByPrice.slice(0, Math.ceil(sortedByPrice.length / 2)).map(h => h.key)
 	);
 
-	// Apply 50% guarantee and cold weather adjustment
+	// Apply 50% guarantee
 	const plannedHours: PlannedHeatingHour[] = rawOffsets.map(h => {
 		let offset = h.rawOffset;
 		const outdoorTemp = weatherByKey.get(h.key) ?? null;
@@ -168,16 +166,6 @@ export function calculatePriceProportionalOffsets(
 		if (cheapestHalfKeys.has(h.key) && offset < 0) {
 			offset = 0;
 			reasons.push('50% garantii');
-		}
-
-		// Cold weather adjustment: reduce penalty when very cold
-		if (outdoorTemp !== null && outdoorTemp < coldThreshold && offset < 0) {
-			// At coldThreshold: no adjustment
-			// At coldThreshold - 10 (e.g., -15°C if threshold is -5°C): 50% reduction
-			const coldFactor = Math.min(1, (coldThreshold - outdoorTemp) / 10);
-			const adjustment = 0.5 * coldFactor;
-			offset = offset * (1 - adjustment);
-			reasons.push(`külm ilm (${outdoorTemp.toFixed(0)}°C)`);
 		}
 
 		// Clamp to valid range and round

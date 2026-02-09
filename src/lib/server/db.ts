@@ -57,7 +57,6 @@ export async function getSettings(db: Database): Promise<Settings> {
 		dhw_target_temp: parseFloat(settingsMap.get('dhw_target_temp') || '60'),
 		// New algorithm settings (daily planning)
 		price_sensitivity: parseFloat(settingsMap.get('price_sensitivity') || '7'),
-		cold_weather_threshold: parseFloat(settingsMap.get('cold_weather_threshold') || '-5'),
 		planning_hour: parseInt(settingsMap.get('planning_hour') || '15'),
 		weather_location_lat: parseFloat(settingsMap.get('weather_location_lat') || '59.3'),
 		weather_location_lon: parseFloat(settingsMap.get('weather_location_lon') || '24.7'),
@@ -77,7 +76,6 @@ export async function updateSetting(db: Database, key: string, value: string): P
 // User-scoped settings helpers
 const USER_SPECIFIC_SETTINGS = [
 	'price_sensitivity',
-	'cold_weather_threshold',
 	'planning_hour',
 	'low_price_threshold',
 	'dhw_min_temp',
@@ -121,7 +119,6 @@ export async function getUserSettings(db: Database, userId: string): Promise<Set
 		dhw_min_temp: parseFloat(settingsMap.get('dhw_min_temp') || '30'),
 		dhw_target_temp: parseFloat(settingsMap.get('dhw_target_temp') || '60'),
 		price_sensitivity: parseFloat(settingsMap.get('price_sensitivity') || '7'),
-		cold_weather_threshold: parseFloat(settingsMap.get('cold_weather_threshold') || '-5'),
 		planning_hour: parseInt(settingsMap.get('planning_hour') || '15'),
 		weather_location_lat: parseFloat(settingsMap.get('weather_location_lat') || '59.3'),
 		weather_location_lon: parseFloat(settingsMap.get('weather_location_lon') || '24.7'),
