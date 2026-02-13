@@ -11,6 +11,7 @@ import {
 	saveDHWSchedule,
 	getPlannedOffsetForHour,
 	getPlannedDHWTempForHour,
+	isHourAlreadyApplied,
 	markHeatingScheduleApplied,
 	markDHWScheduleApplied,
 	cleanupOldSchedules,
@@ -600,6 +601,16 @@ export async function executeScheduledTask(
 			}
 		}
 
+		// Check if this hour was already processed (run once per hour, not every 15 min)
+		const alreadyApplied = await isHourAlreadyApplied(db, todayStr, currentHour, userId);
+		if (alreadyApplied) {
+			return {
+				success: true,
+				message: `Tund ${currentHour} juba töödeldud, vahele jäetud`,
+				planningResult
+			};
+		}
+
 		// Get current price
 		const currentPriceEurMwh = await getCurrentHourPrice(db);
 		if (currentPriceEurMwh === null) {
@@ -657,19 +668,23 @@ export async function executeScheduledTask(
 		let decision: ControlDecision;
 		const plannedOffset = await getPlannedOffsetForHour(db, todayStr, currentHour, userId);
 
-		if (plannedOffset !== null) {
-			// Use pre-planned schedule
-			const action: ControlAction = plannedOffset >= 5 ? 'boost' : plannedOffset <= -5 ? 'reduce' : 'normal';
-			decision = {
-				action,
-				reason: `Planeeritud nihe: ${plannedOffset} (hind ${currentPriceCentKwh.toFixed(1)} s/kWh)`,
-				targetTemperature: plannedOffset,
-				currentPrice: currentPriceCentKwh
-			};
+		// Check previous hour's planned offset to avoid redundant SET calls
+		const prevHour = currentHour === 0 ? 23 : currentHour - 1;
+		const prevDate = currentHour === 0
+			? new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+			: todayStr;
+		const prevPlannedOffset = await getPlannedOffsetForHour(db, prevDate, prevHour, userId);
 
-			// Mark as applied
-			await markHeatingScheduleApplied(db, todayStr, currentHour, userId);
-		} else {
+			if (plannedOffset !== null) {
+				// Use pre-planned schedule
+				const action: ControlAction = plannedOffset >= 5 ? 'boost' : plannedOffset <= -5 ? 'reduce' : 'normal';
+				decision = {
+					action,
+					reason: `Planeeritud nihe: ${plannedOffset} (hind ${currentPriceCentKwh.toFixed(1)} s/kWh)`,
+					targetTemperature: plannedOffset,
+					currentPrice: currentPriceCentKwh
+				};
+			} else {
 			// Fallback: no schedule exists, use legacy algorithm
 			const todayPrices = await getTodayPrices(db);
 			const tomorrowPrices = await getTomorrowPrices(db);
@@ -686,21 +701,22 @@ export async function executeScheduledTask(
 			);
 		}
 
-		// Handle DHW
-		let dhwDecision: DHWControlDecision | null = null;
-		if (settings.dhw_enabled && dhwControlId) {
-			const plannedDhwTemp = await getPlannedDHWTempForHour(db, todayStr, currentHour, userId);
+			// Handle DHW
+			let dhwDecision: DHWControlDecision | null = null;
+			let plannedDhwTemp: number | null = null;
+			const prevPlannedDhwTemp = await getPlannedDHWTempForHour(db, prevDate, prevHour, userId);
+			if (settings.dhw_enabled && dhwControlId) {
+				plannedDhwTemp = await getPlannedDHWTempForHour(db, todayStr, currentHour, userId);
 
 			if (plannedDhwTemp !== null) {
 				const action: ControlAction = plannedDhwTemp >= 50 ? 'boost' : plannedDhwTemp <= 35 ? 'reduce' : 'normal';
-				dhwDecision = {
-					action,
-					reason: `Planeeritud temp: ${plannedDhwTemp}°C`,
-					targetTemperature: plannedDhwTemp,
-					currentPrice: currentPriceCentKwh
-				};
-				await markDHWScheduleApplied(db, todayStr, currentHour, userId);
-			} else {
+					dhwDecision = {
+						action,
+						reason: `Planeeritud temp: ${plannedDhwTemp}°C`,
+						targetTemperature: plannedDhwTemp,
+						currentPrice: currentPriceCentKwh
+					};
+				} else {
 				// Fallback DHW logic
 				const tankTemp = dhwState?.tank_temp ?? null;
 				const minTemp = settings.dhw_min_temp;
@@ -731,73 +747,144 @@ export async function executeScheduledTask(
 			}
 		}
 
-		// Save current state
-		const stateToSave: DeviceState = {
-			...deviceState,
-			timestamp: new Date().toISOString(),
-			price_cent_kwh: currentPriceCentKwh,
-			action_taken: decision.action,
-			dhw_tank_temp: dhwState?.tank_temp ?? null,
-			dhw_target_temp: dhwState?.target_temp ?? null,
-			dhw_action: dhwDecision?.action ?? undefined,
-			heating_kwh: consumptionData.heating_today_kwh,
-			cooling_kwh: consumptionData.cooling_today_kwh,
-			dhw_kwh: consumptionData.dhw_today_kwh
-		};
-		await saveDeviceState(db, stateToSave, userId);
-		await saveHourlyConsumption(db, consumptionData, userId);
+			const messages: string[] = [];
+			let effectiveHeatingOffset = deviceState.target_offset;
+			let effectiveDhwTarget = dhwState?.target_temp ?? null;
+			const hasPlannedHeating = plannedOffset !== null;
+			let heatingSetSucceeded = !hasPlannedHeating;
 
-		const messages: string[] = [];
+			// Apply heating temperature change
+			// Skip SET if previous hour had the same planned offset (device already at correct value)
+			const heatingSkipSet = prevPlannedOffset !== null && prevPlannedOffset === decision.targetTemperature;
+			if (heatingSkipSet) {
+				effectiveHeatingOffset = decision.targetTemperature;
+				heatingSetSucceeded = true;
+				messages.push(`Küte: nihe ${decision.targetTemperature} sama mis eelmisel tunnil, vahele jäetud`);
+			} else if (climateControlId && deviceState.target_offset !== decision.targetTemperature) {
+				try {
+					await setHeatingTemperature(
+						accessToken,
+						device.id,
+						climateControlId,
+						decision.targetTemperature,
+						true
+					);
 
-		// Apply heating temperature change
-		if (climateControlId && deviceState.target_offset !== decision.targetTemperature) {
-			await setHeatingTemperature(
-				accessToken,
-				device.id,
-				climateControlId,
-				decision.targetTemperature,
-				true
-			);
+					await logControlAction(db, {
+						timestamp: new Date().toISOString(),
+						action: decision.action,
+						reason: decision.reason,
+						price_eur_mwh: currentPriceEurMwh,
+						old_target_temp: deviceState.target_offset,
+						new_target_temp: decision.targetTemperature
+					}, userId);
 
-			await logControlAction(db, {
-				timestamp: new Date().toISOString(),
-				action: decision.action,
-				reason: decision.reason,
-				price_eur_mwh: currentPriceEurMwh,
-				old_target_temp: deviceState.target_offset,
-				new_target_temp: decision.targetTemperature
-			}, userId);
+					effectiveHeatingOffset = decision.targetTemperature;
+					heatingSetSucceeded = true;
+					messages.push(`Küte: nihe ${deviceState.target_offset} -> ${decision.targetTemperature} (${decision.action})`);
+				} catch (setError) {
+					const errMsg = setError instanceof Error ? setError.message : String(setError);
+					console.error(`Failed to set heating temperature: ${errMsg}`);
 
-			messages.push(`Küte: nihe ${deviceState.target_offset} -> ${decision.targetTemperature} (${decision.action})`);
-		} else {
-			messages.push(`Küte: muutust pole (nihe ${decision.targetTemperature})`);
-		}
+					await logControlAction(db, {
+						timestamp: new Date().toISOString(),
+						action: 'error',
+						reason: `Kütte nihe ${deviceState.target_offset} -> ${decision.targetTemperature} ebaõnnestus: ${errMsg}`,
+						price_eur_mwh: currentPriceEurMwh,
+						old_target_temp: deviceState.target_offset,
+						new_target_temp: decision.targetTemperature
+					}, userId);
 
-		// Apply DHW temperature change
-		if (dhwDecision && dhwControlId) {
-			const currentDhwTarget = dhwState?.target_temp ?? 0;
-			if (currentDhwTarget !== dhwDecision.targetTemperature) {
-				await setDHWTemperature(
-					accessToken,
-					device.id,
-					dhwControlId,
-					dhwDecision.targetTemperature
-				);
-
-				await logControlAction(db, {
-					timestamp: new Date().toISOString(),
-					action: `dhw_${dhwDecision.action}`,
-					reason: dhwDecision.reason,
-					price_eur_mwh: currentPriceEurMwh,
-					old_target_temp: currentDhwTarget,
-					new_target_temp: dhwDecision.targetTemperature
-				}, userId);
-
-				messages.push(`Boiler: siht ${currentDhwTarget}°C -> ${dhwDecision.targetTemperature}°C (${dhwDecision.action})`);
+					heatingSetSucceeded = false;
+					messages.push(`Küte: VIGA seadistamisel (${errMsg})`);
+				}
 			} else {
-				messages.push(`Boiler: muutust pole (siht ${dhwDecision.targetTemperature}°C)`);
+				if (!climateControlId && deviceState.target_offset !== decision.targetTemperature) {
+					heatingSetSucceeded = false;
+					messages.push(`Küte: kliimaseadme ID puudub, nihet ei saanud rakendada (${decision.targetTemperature})`);
+				} else {
+					effectiveHeatingOffset = decision.targetTemperature;
+					heatingSetSucceeded = true;
+					messages.push(`Küte: muutust pole (nihe ${decision.targetTemperature})`);
+				}
 			}
-		}
+			if (hasPlannedHeating && heatingSetSucceeded) {
+				await markHeatingScheduleApplied(db, todayStr, currentHour, userId);
+			}
+
+			// Apply DHW temperature change
+			const hasPlannedDhw = plannedDhwTemp !== null;
+			let dhwSetSucceeded = !hasPlannedDhw;
+			if (dhwDecision && dhwControlId) {
+				const currentDhwTarget = dhwState?.target_temp ?? 0;
+				const dhwSkipSet = prevPlannedDhwTemp !== null && prevPlannedDhwTemp === dhwDecision.targetTemperature;
+				if (dhwSkipSet) {
+					effectiveDhwTarget = dhwDecision.targetTemperature;
+					dhwSetSucceeded = true;
+					messages.push(`Boiler: siht ${dhwDecision.targetTemperature}°C sama mis eelmisel tunnil, vahele jäetud`);
+				} else if (currentDhwTarget !== dhwDecision.targetTemperature) {
+					try {
+						await setDHWTemperature(
+							accessToken,
+							device.id,
+							dhwControlId,
+							dhwDecision.targetTemperature
+						);
+
+						await logControlAction(db, {
+							timestamp: new Date().toISOString(),
+							action: `dhw_${dhwDecision.action}`,
+							reason: dhwDecision.reason,
+							price_eur_mwh: currentPriceEurMwh,
+							old_target_temp: currentDhwTarget,
+							new_target_temp: dhwDecision.targetTemperature
+						}, userId);
+
+						effectiveDhwTarget = dhwDecision.targetTemperature;
+						dhwSetSucceeded = true;
+						messages.push(`Boiler: siht ${currentDhwTarget}°C -> ${dhwDecision.targetTemperature}°C (${dhwDecision.action})`);
+					} catch (setError) {
+						const errMsg = setError instanceof Error ? setError.message : String(setError);
+						console.error(`Failed to set DHW temperature: ${errMsg}`);
+
+						await logControlAction(db, {
+							timestamp: new Date().toISOString(),
+							action: 'dhw_error',
+							reason: `Boileri siht ${currentDhwTarget}°C -> ${dhwDecision.targetTemperature}°C ebaõnnestus: ${errMsg}`,
+							price_eur_mwh: currentPriceEurMwh,
+							old_target_temp: currentDhwTarget,
+							new_target_temp: dhwDecision.targetTemperature
+						}, userId);
+
+						dhwSetSucceeded = false;
+						messages.push(`Boiler: VIGA seadistamisel (${errMsg})`);
+					}
+				} else {
+					effectiveDhwTarget = dhwDecision.targetTemperature;
+					dhwSetSucceeded = true;
+					messages.push(`Boiler: muutust pole (siht ${dhwDecision.targetTemperature}°C)`);
+				}
+			}
+			if (hasPlannedDhw && dhwSetSucceeded) {
+				await markDHWScheduleApplied(db, todayStr, currentHour, userId);
+			}
+
+			// Save state after applying control decisions so dashboard reflects the effective target values.
+			const stateToSave: DeviceState = {
+				...deviceState,
+				target_offset: effectiveHeatingOffset,
+				timestamp: new Date().toISOString(),
+				price_cent_kwh: currentPriceCentKwh,
+				action_taken: decision.action,
+				dhw_tank_temp: dhwState?.tank_temp ?? null,
+				dhw_target_temp: effectiveDhwTarget,
+				dhw_action: dhwDecision?.action ?? undefined,
+				heating_kwh: consumptionData.heating_today_kwh,
+				cooling_kwh: consumptionData.cooling_today_kwh,
+				dhw_kwh: consumptionData.dhw_today_kwh
+			};
+			await saveDeviceState(db, stateToSave, userId);
+			await saveHourlyConsumption(db, consumptionData, userId);
 
 		return {
 			success: true,

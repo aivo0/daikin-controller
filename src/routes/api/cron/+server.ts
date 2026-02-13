@@ -3,7 +3,7 @@ import { json, error } from '@sveltejs/kit';
 import { createD1Wrapper } from '$lib/server/db';
 import { executeScheduledTaskForAllUsers } from '$lib/server/scheduler';
 
-// This endpoint is called by Cloudflare Cron Triggers every 15 minutes
+// This endpoint is called by Cloudflare Cron Triggers every hour
 // You can also call it manually for testing
 // Now processes ALL users with valid Daikin tokens
 

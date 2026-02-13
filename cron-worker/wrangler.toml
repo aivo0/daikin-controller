@@ -6,7 +6,7 @@ main = "index.ts"
 compatibility_date = "2024-12-01"
 
 [triggers]
-crons = ["*/15 * * * *"]  # Every 15 minutes
+crons = ["0 * * * *"]  # Every hour
 
 [vars]
 APP_URL = "https://daikin-controller.pages.dev"

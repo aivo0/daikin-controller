@@ -47,7 +47,7 @@ export default {
 				status: 'ok',
 				message: 'Daikin Cron Worker',
 				app_url: env.APP_URL,
-				next_run: 'Every 15 minutes'
+					next_run: 'Every hour'
 			}),
 			{
 				headers: { 'Content-Type': 'application/json' }

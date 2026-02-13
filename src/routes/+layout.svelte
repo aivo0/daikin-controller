@@ -36,13 +36,14 @@
 </svelte:head>
 
 <div class="min-h-screen bg-base-200">
-	<div class="navbar bg-base-100 shadow-lg">
-		<div class="flex-1">
-			<a href="/" class="btn btn-ghost text-xl">{$t.appName}</a>
+	<div class="navbar bg-base-100 shadow-lg px-2 sm:px-4 flex-nowrap">
+		<div class="flex-1 min-w-0">
+			<a href="/" class="btn btn-ghost text-lg sm:text-xl px-2">{$t.appName}</a>
 		</div>
-		<div class="flex-none">
 			{#if data.user}
-				<ul class="menu menu-horizontal px-1">
+				<div class="flex-none flex items-center gap-1 sm:gap-2 flex-nowrap">
+					<!-- Desktop nav links - hidden on mobile -->
+					<ul class="menu menu-horizontal px-1 hidden lg:flex shrink-0">
 					{#each navItems as item}
 						<li>
 							<a
@@ -67,7 +68,7 @@
 					{/if}
 				</button>
 				<!-- Language switcher -->
-				<div class="dropdown dropdown-end ml-2">
+				<div class="dropdown dropdown-end">
 					<div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-1">
 						<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
@@ -80,7 +81,7 @@
 					</ul>
 				</div>
 				<!-- User menu -->
-				<div class="dropdown dropdown-end ml-2">
+				<div class="dropdown dropdown-end">
 					<div tabindex="0" role="button" class="btn btn-ghost btn-circle avatar">
 						{#if data.user.image}
 							<div class="w-10 rounded-full">
@@ -97,8 +98,28 @@
 						<li><button onclick={signOut}>{$t.nav.signOut}</button></li>
 					</ul>
 				</div>
-			{/if}
-		</div>
+				<!-- Mobile hamburger menu - visible only on mobile -->
+				<div class="dropdown dropdown-end lg:hidden">
+					<div tabindex="0" role="button" class="btn btn-ghost btn-sm">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+						</svg>
+					</div>
+					<ul tabindex="0" class="menu menu-sm dropdown-content bg-base-100 rounded-box z-50 mt-3 w-52 p-2 shadow">
+						{#each navItems as item}
+							<li>
+								<a
+									href={item.href}
+									class:active={$page.url.pathname === item.href}
+								>
+									{item.icon} {$t.nav[item.key]}
+								</a>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			</div>
+		{/if}
 	</div>
 
 	<main class="container mx-auto p-4 max-w-6xl">

@@ -24,7 +24,7 @@ PUBLIC_APP_NAME = "Daikin Controller"
 #
 # Example cron worker (deploy separately):
 # [triggers]
-# crons = ["*/15 * * * *"]
+# crons = ["0 * * * *"]
 #
 # Then in the worker, call:
 # await fetch("https://your-app.pages.dev/api/cron", {
