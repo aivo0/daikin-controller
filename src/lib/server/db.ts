@@ -718,6 +718,47 @@ export async function getPlannedOffsetForHour(
 }
 
 /**
+ * Check whether this hour's schedule has already been applied.
+ *
+ * NOTE: Reconstructed. The original lived only in the directly-deployed build
+ * and was never pushed to git. An hour counts as applied when a planned heating
+ * OR DHW row for it has a non-null applied_at, so the 15-minute cron applies
+ * each hour at most once (markHeatingScheduleApplied / markDHWScheduleApplied
+ * set those timestamps on success).
+ */
+export async function isHourAlreadyApplied(
+	db: Database,
+	date: string,
+	hour: number,
+	userId?: string
+): Promise<boolean> {
+	const row = userId
+		? await db.get<{ applied: number }>(
+			`SELECT (
+				EXISTS(SELECT 1 FROM heating_schedule WHERE user_id = ? AND date = ? AND hour = ? AND applied_at IS NOT NULL)
+				OR EXISTS(SELECT 1 FROM dhw_schedule WHERE user_id = ? AND date = ? AND hour = ? AND applied_at IS NOT NULL)
+			) AS applied`,
+			userId,
+			date,
+			hour,
+			userId,
+			date,
+			hour
+		)
+		: await db.get<{ applied: number }>(
+			`SELECT (
+				EXISTS(SELECT 1 FROM heating_schedule WHERE date = ? AND hour = ? AND applied_at IS NOT NULL)
+				OR EXISTS(SELECT 1 FROM dhw_schedule WHERE date = ? AND hour = ? AND applied_at IS NOT NULL)
+			) AS applied`,
+			date,
+			hour,
+			date,
+			hour
+		);
+	return (row?.applied ?? 0) === 1;
+}
+
+/**
  * Mark a scheduled hour as applied
  */
 export async function markHeatingScheduleApplied(
